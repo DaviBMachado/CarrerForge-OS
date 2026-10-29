@@ -5,6 +5,11 @@ cd /d "%~dp0"
 
 echo [CareerForge OS] Initializing Monolith Runtime...
 
+:: 0. Configure git hooks for pipeline protection
+if exist ".git" (
+    git config core.hooksPath .githooks >nul 2>&1
+)
+
 :: 1. Verify / Create Python virtual environment
 if not exist ".venv" (
     echo [CareerForge OS] Virtual environment not found. Creating .venv...

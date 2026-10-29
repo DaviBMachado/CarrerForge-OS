@@ -16,8 +16,54 @@ on:
       - dev
 
 jobs:
+  validate-branch-pipeline:
+    name: Validate Branch Promotion Pipeline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce Branch Promotion Rules
+        run: |
+          EVENT="${{ github.event_name }}"
+          BASE="${{ github.base_ref }}"
+          HEAD="${{ github.head_ref }}"
+          REF="${{ github.ref }}"
+
+          echo "Event: $EVENT | Base: $BASE | Head: $HEAD | Ref: $REF"
+
+          if [ "$EVENT" = "pull_request" ]; then
+            # Rule 1: Pull requests into 'main' must originate strictly from 'dev'
+            if [ "$BASE" = "main" ]; then
+              if [ "$HEAD" != "dev" ]; then
+                echo "::error::❌ Invalid PR source! PRs targeting 'main' must originate from 'dev'. Received: '$HEAD'."
+                echo "Enforced Pipeline: (feat|fix|refactor|...) -> dev -> main"
+                exit 1
+              fi
+              echo "✅ PR validation passed: 'dev' -> 'main'"
+            fi
+
+            # Rule 2: Pull requests into 'dev' must use valid prefix
+            if [ "$BASE" = "dev" ]; then
+              if ! echo "$HEAD" | grep -Eq '^(feat|fix|refactor|chore|test|docs|perf|ci)/'; then
+                echo "::error::❌ Invalid branch prefix for PR targeting 'dev'! Received: '$HEAD'."
+                echo "Allowed branch prefixes: feat/*, fix/*, refactor/*, chore/*, test/*, docs/*, perf/*, ci/*"
+                exit 1
+              fi
+              echo "✅ PR validation passed: '$HEAD' -> 'dev'"
+            fi
+          fi
+
+          if [ "$EVENT" = "push" ]; then
+            if [ "$REF" = "refs/heads/main" ]; then
+              COMMIT_MSG="${{ github.event.head_commit.message }}"
+              echo "Push to main detected. Head commit: $COMMIT_MSG"
+              if ! echo "$COMMIT_MSG" | grep -Eqi '(merge pull request|merge branch .dev.|into main|\(#\d+\))'; then
+                echo "::warning::⚠️ Direct push to 'main' detected! All changes should follow: (feat|fix|refactor|...) -> dev -> main."
+              fi
+            fi
+          fi
+
   ci:
     name: Lint & Build Validation
+    needs: [validate-branch-pipeline]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

@@ -1,0 +1,48 @@
+#!/bin/sh
+# CareerForge OS - Pre-Push Hook
+# Enforces pipeline rule: (feat|fix|refactor|chore|...) -> dev -> main
+
+remote="$1"
+url="$2"
+zero="0000000000000000000000000000000000000000"
+
+while read local_ref local_sha remote_ref remote_sha
+do
+    # Allow branch deletion
+    if [ "$local_sha" = "$zero" ]; then
+        continue
+    fi
+
+    # Block direct pushes to main
+    if [ "$remote_ref" = "refs/heads/main" ]; then
+        echo ""
+        echo "========================================================================"
+        echo "⛔ [PIPELINE ERROR] Direct push to 'main' is blocked!"
+        echo "========================================================================"
+        echo "Strict Pipeline Enforcement:"
+        echo "  1. Develop on feature/fix branch: (feat/*, fix/*, refactor/*, ...)"
+        echo "  2. Open a Pull Request targeting 'dev'"
+        echo "  3. Merge into 'dev' after CI checks pass"
+        echo "  4. Promote 'dev' into 'main' via approved Pull Request"
+        echo ""
+        echo "If this is an intentional hotfix emergency, use: git push --no-verify"
+        echo "========================================================================"
+        echo ""
+        exit 1
+    fi
+
+    # Block direct pushes to dev from anything other than merge
+    if [ "$remote_ref" = "refs/heads/dev" ]; then
+        # Check current branch
+        current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+        if [ "$current_branch" = "main" ]; then
+            echo ""
+            echo "========================================================================"
+            echo "⛔ [PIPELINE ERROR] Pushing from 'main' to 'dev' is blocked!"
+            echo "========================================================================"
+            exit 1
+        fi
+    fi
+done
+
+exit 0
