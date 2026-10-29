@@ -39,6 +39,7 @@ indent-style = "space"
 
 [tool.pytest.ini_options]
 minversion = "7.0"
+pythonpath = ["."]
 testpaths = ["backend/tests", "tests"]
 python_files = ["test_*.py", "*_test.py"]
 norecursedirs = [".git", ".venv", "frontend", "_tools", "companies", "general-resumes", ".backlogmd"]

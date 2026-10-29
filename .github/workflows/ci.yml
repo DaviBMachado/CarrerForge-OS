@@ -34,6 +34,8 @@ jobs:
             pyproject.toml
 
       - name: Run Python Checks (Ruff & Pytest)
+        env:
+          PYTHONPATH: .
         run: |
           python -m pip install --upgrade pip
           pip install ruff pytest

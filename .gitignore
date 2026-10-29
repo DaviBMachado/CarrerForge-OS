@@ -6,3 +6,8 @@ node_modules/
 dist/
 .ruff_cache/
 .pytest_cache/
+GEMINI.md
+.gemini/
+_tools/specs/
+companies/
+general-resumes/
