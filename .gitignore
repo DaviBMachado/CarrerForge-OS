@@ -1,0 +1,8 @@
+.backlogmd
+.venv/
+__pycache__/
+*.py[cod]
+node_modules/
+dist/
+.ruff_cache/
+.pytest_cache/
