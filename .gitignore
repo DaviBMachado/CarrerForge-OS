@@ -11,3 +11,11 @@ GEMINI.md
 _tools/specs/
 companies/
 general-resumes/
+*.db
+*.db-shm
+*.db-wal
+backend/data/*.db
+*.egg-info/
+build/
+dist/
+
