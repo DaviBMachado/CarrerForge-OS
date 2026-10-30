@@ -424,3 +424,54 @@ class ResumeCompiler:
         doc.build(story)
         buf.seek(0)
         return buf
+
+    def compile_cover_letter_docx(self, letter: CoverLetterSpec | dict[str, Any]) -> io.BytesIO:
+        parsed = self._coerce_cover_letter(letter)
+        doc = Document()
+        for section in doc.sections:
+            section.top_margin = Mm(15)
+            section.bottom_margin = Mm(15)
+            section.left_margin = Mm(15)
+            section.right_margin = Mm(15)
+
+        normal = doc.styles["Normal"]
+        normal.font.name = "Calibri"  # type: ignore[union-attr]
+        normal.font.size = Pt(10)  # type: ignore[union-attr]
+
+        display_title = parsed.title or parsed.name
+        if display_title:
+            _add_docx_block(doc, ResumeBlock(type="title", text=display_title))
+
+        contacts = (
+            parsed.contact
+            if isinstance(parsed.contact, list)
+            else ([parsed.contact] if parsed.contact else [])
+        )
+        for line in contacts:
+            if line:
+                _add_docx_block(doc, ResumeBlock(type="contact", text=line))
+
+        if parsed.date:
+            _add_docx_block(doc, ResumeBlock(type="paragraph", text=parsed.date))
+        if parsed.recipient:
+            _add_docx_block(doc, ResumeBlock(type="subheading", text=parsed.recipient))
+        if parsed.subject:
+            _add_docx_block(doc, ResumeBlock(type="subheading", text=parsed.subject))
+        if parsed.greeting:
+            _add_docx_block(doc, ResumeBlock(type="paragraph", text=parsed.greeting))
+
+        paragraphs = list(parsed.paragraphs)
+        if parsed.body:
+            paragraphs.extend(p.strip() for p in parsed.body.split("\n\n") if p.strip())
+        for para in paragraphs:
+            _add_docx_block(doc, ResumeBlock(type="paragraph", text=para))
+
+        if parsed.sign_off:
+            for line in parsed.sign_off.splitlines():
+                if line.strip():
+                    _add_docx_block(doc, ResumeBlock(type="paragraph", text=line.strip()))
+
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+        return buf

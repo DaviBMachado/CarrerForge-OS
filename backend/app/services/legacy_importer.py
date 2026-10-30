@@ -136,8 +136,9 @@ def _parse_experience_heading(
 
     if date_range_match:
         start_date = date_range_match.group(1).strip()
-        end_date = date_range_match.group(2).strip()
-        if re.search(r"presente?|atual|current", end_date, re.IGNORECASE):
+        raw_end = date_range_match.group(2).strip()
+        end_date = raw_end
+        if re.search(r"presente?|atual|current", raw_end, re.IGNORECASE):
             is_current = True
     elif single_date_match:
         start_date = single_date_match.group(1).strip()

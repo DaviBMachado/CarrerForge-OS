@@ -1,8 +1,10 @@
+import base64
 import io
 import json
 from pathlib import Path
 
 from docx import Document
+from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
 from backend.app.services.resume_compiler import (
@@ -12,6 +14,7 @@ from backend.app.services.resume_compiler import (
     ResumeSection,
     ResumeSpec,
 )
+from backend.main import app
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_SPEC_PATH = REPO_ROOT / "_tools" / "specs" / "akross_backend_estagiario.json"
@@ -98,3 +101,92 @@ def test_compile_cover_letter_pdf():
     text = reader.pages[0].extract_text() or ""
     assert "Acme Corp" in text
     assert "Itaú Unibanco" in text
+
+
+def test_compiler_preview_endpoint():
+    client = TestClient(app)
+    raw_data = json.loads(SAMPLE_SPEC_PATH.read_text(encoding="utf-8"))
+
+    res = client.post("/api/compiler/preview", json=raw_data)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["page_count"] >= 1
+    assert body["is_valid_2_page"] is (body["page_count"] <= 2)
+    pdf_bytes = base64.b64decode(body["pdf_base64"])
+    assert pdf_bytes.startswith(b"%PDF-")
+
+
+def test_compiler_preview_detects_over_2_pages():
+    client = TestClient(app)
+    payload = {
+        "title": "Jane Doe",
+        "contact": "jane@example.com",
+        "sections": [
+            {
+                "title": "Experience",
+                "bullets": [
+                    f"Delivered distributed architecture milestone #{i} with high availability "
+                    "and low latency across multiple global cloud regions and availability zones."
+                    for i in range(95)
+                ],
+            }
+        ],
+    }
+    res = client.post("/api/compiler/preview", json=payload)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["page_count"] >= 3
+    assert body["is_valid_2_page"] is False
+
+
+def test_compiler_export_pdf_and_docx_endpoints():
+    client = TestClient(app)
+    raw_data = json.loads(SAMPLE_SPEC_PATH.read_text(encoding="utf-8"))
+
+    res_pdf = client.post("/api/compiler/export", json={**raw_data, "format": "pdf"})
+    assert res_pdf.status_code == 200
+    assert res_pdf.headers["content-type"] == "application/pdf"
+    assert "attachment;" in res_pdf.headers["content-disposition"]
+    assert '.pdf"' in res_pdf.headers["content-disposition"]
+    assert res_pdf.content.startswith(b"%PDF-")
+
+    res_docx = client.post("/api/compiler/export", json={**raw_data, "format": "docx"})
+    assert res_docx.status_code == 200
+    assert (
+        res_docx.headers["content-type"]
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert "attachment;" in res_docx.headers["content-disposition"]
+    assert '.docx"' in res_docx.headers["content-disposition"]
+    doc = Document(io.BytesIO(res_docx.content))
+    assert any("Davi Bernardes Machado" in p.text for p in doc.paragraphs)
+
+
+def test_compiler_cover_letter_export_endpoints():
+    client = TestClient(app)
+    payload = {
+        "title": "Davi Bernardes Machado",
+        "contact": "São Paulo - SP | davibernardes021@gmail.com",
+        "recipient": "Hiring Team - Acme Corp",
+        "subject": "Application for Backend Engineer",
+        "paragraphs": ["Excited to apply for the Backend Engineer role."],
+        "sign_off": "Sincerely,\nDavi",
+    }
+
+    res_pdf = client.post("/api/compiler/cover-letter/export", json=payload)
+    assert res_pdf.status_code == 200
+    assert res_pdf.headers["content-type"] == "application/pdf"
+    assert "attachment;" in res_pdf.headers["content-disposition"]
+    assert res_pdf.content.startswith(b"%PDF-")
+
+    res_docx = client.post(
+        "/api/compiler/cover-letter/export?format=docx",
+        json=payload,
+    )
+    assert res_docx.status_code == 200
+    assert (
+        res_docx.headers["content-type"]
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    doc = Document(io.BytesIO(res_docx.content))
+    assert any("Acme Corp" in p.text for p in doc.paragraphs)
