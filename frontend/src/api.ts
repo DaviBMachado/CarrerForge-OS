@@ -85,6 +85,40 @@ export interface HealthStatus {
   version: string;
 }
 
+export type ResumeBlockType =
+  | "title"
+  | "contact"
+  | "section"
+  | "subheading"
+  | "paragraph"
+  | "bullet"
+  | "skillline";
+
+export interface ResumeBlock {
+  type: ResumeBlockType;
+  text: string;
+}
+
+export interface ResumeSection {
+  title: string;
+  blocks?: ResumeBlock[];
+  bullets?: string[];
+}
+
+export interface ResumeSpecPayload {
+  name?: string;
+  title?: string;
+  contact?: string | string[];
+  filename_title?: string;
+  sections: ResumeSection[];
+}
+
+export interface PreviewResponse {
+  page_count: number;
+  is_valid_2_page: boolean;
+  pdf_base64: string;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
@@ -138,4 +172,35 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  previewResume: (spec: ResumeSpecPayload) =>
+    request<PreviewResponse>("/api/compiler/preview", {
+      method: "POST",
+      body: JSON.stringify(spec),
+    }),
+  exportResume: async (
+    spec: ResumeSpecPayload,
+    format: "pdf" | "docx"
+  ): Promise<{ blob: Blob; filename: string }> => {
+    const res = await fetch(`/api/compiler/export?format=${format}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...spec, format }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const errJson = (await res.json()) as { detail?: string };
+        if (errJson.detail) detail = errJson.detail;
+      } catch {
+        // ignore non-json error body
+      }
+      throw new Error(detail);
+    }
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    const filename =
+      match?.[1] || `${spec.filename_title || "Resume"}.${format}`;
+    const blob = await res.blob();
+    return { blob, filename };
+  },
 };

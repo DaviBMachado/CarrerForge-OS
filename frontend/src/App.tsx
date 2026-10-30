@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { api, HealthStatus, SystemSettings } from "./api";
 import { MasterProfileHub } from "./components/MasterProfileHub";
+import { ResumePreviewer } from "./components/ResumePreviewer";
 import { SettingsModal } from "./components/SettingsModal";
 
-type ActiveTab = "profile" | "status";
+type ActiveTab = "profile" | "compiler" | "status";
 
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("profile");
@@ -78,6 +79,14 @@ export function App() {
             </button>
             <button
               type="button"
+              className={`nav-tab ${activeTab === "compiler" ? "active" : ""}`}
+              onClick={() => setActiveTab("compiler")}
+              aria-current={activeTab === "compiler" ? "page" : undefined}
+            >
+              Resume Previewer
+            </button>
+            <button
+              type="button"
               className={`nav-tab ${activeTab === "status" ? "active" : ""}`}
               onClick={() => setActiveTab("status")}
               aria-current={activeTab === "status" ? "page" : undefined}
@@ -141,6 +150,8 @@ export function App() {
       <main className="main-container">
         {activeTab === "profile" ? (
           <MasterProfileHub onNotify={notify} />
+        ) : activeTab === "compiler" ? (
+          <ResumePreviewer onNotify={notify} />
         ) : (
           <section className="panel" aria-labelledby="runtime-status-heading">
             <div className="panel-header">
