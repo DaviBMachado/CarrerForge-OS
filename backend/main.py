@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from backend.app.db import init_db
 from backend.app.routers.compiler import router as compiler_router
 from backend.app.routers.profile import router as profile_router
+from backend.app.routers.scraper import router as scraper_router
 from backend.app.routers.settings import router as settings_router
 
 
@@ -19,6 +20,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="CareerForge OS", version="0.1.0", lifespan=lifespan)
 app.include_router(compiler_router, prefix="/api")
 app.include_router(profile_router, prefix="/api")
+app.include_router(scraper_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"

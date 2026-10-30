@@ -15,6 +15,7 @@ general-resumes/
 *.db-shm
 *.db-wal
 backend/data/*.db
+backend/data/.browser_session/
 *.egg-info/
 build/
 dist/
