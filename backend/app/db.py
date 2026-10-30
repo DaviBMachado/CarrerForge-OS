@@ -36,6 +36,7 @@ else:
 def init_db() -> None:
     # shortcut: tables auto-created on startup; Alembic handles migrations
     from backend.app import models  # noqa: F401
+
     SQLModel.metadata.create_all(engine)
 
 

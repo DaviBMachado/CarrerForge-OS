@@ -92,9 +92,9 @@ def parse_markdown_resume(md_content: str) -> dict[str, Any]:
                     data["contact_json"]["github"] = (
                         part if part.startswith("http") else f"https://{part}"
                     )
-                elif (
-                    "SP" in part or "São Paulo" in part
-                ) and "location" not in data["contact_json"]:
+                elif ("SP" in part or "São Paulo" in part) and "location" not in data[
+                    "contact_json"
+                ]:
                     data["contact_json"]["location"] = part
             continue
 

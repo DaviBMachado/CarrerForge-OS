@@ -30,9 +30,7 @@ def get_or_create_default_profile(session: Session) -> MasterProfile:
         session.refresh(user)
 
     assert user.id is not None
-    profile = session.exec(
-        select(MasterProfile).where(MasterProfile.user_id == user.id)
-    ).first()
+    profile = session.exec(select(MasterProfile).where(MasterProfile.user_id == user.id)).first()
     if not profile:
         profile = MasterProfile(
             user_id=user.id,
@@ -62,9 +60,7 @@ def serialize_experience(exp: Experience) -> ExperienceRead:
 
 def serialize_profile(profile: MasterProfile, session: Session) -> ProfileRead:
     experiences = session.exec(
-        select(Experience)
-        .where(Experience.profile_id == profile.id)
-        .order_by(col(Experience.id))
+        select(Experience).where(Experience.profile_id == profile.id).order_by(col(Experience.id))
     ).all()
 
     return ProfileRead(
@@ -110,9 +106,7 @@ def update_profile(data: ProfileUpdate, session: DBSession) -> ProfileRead:
 
 
 @router.post("/experiences", response_model=ExperienceRead, status_code=status.HTTP_201_CREATED)
-def create_experience(
-    data: ExperienceCreate, session: DBSession
-) -> ExperienceRead:
+def create_experience(data: ExperienceCreate, session: DBSession) -> ExperienceRead:
     profile = get_or_create_default_profile(session)
     exp = Experience(
         profile_id=profile.id,  # type: ignore[arg-type]
@@ -141,9 +135,7 @@ def update_experience(
         )
     ).first()
     if not exp:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Experience not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experience not found")
 
     if data.company is not None:
         exp.company = data.company
@@ -175,9 +167,7 @@ def delete_experience(experience_id: int, session: DBSession) -> None:
         )
     ).first()
     if not exp:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Experience not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experience not found")
 
     session.delete(exp)
     session.commit()
