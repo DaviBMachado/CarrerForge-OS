@@ -267,6 +267,7 @@ def import_legacy_data(
                     existing_texts.add(clean_t)
                     bullets.append(sb)
 
+        assert profile.id is not None
         experience = Experience(
             profile_id=profile.id,
             company=exp_data["company"],

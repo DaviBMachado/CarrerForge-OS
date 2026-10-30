@@ -5,7 +5,7 @@ from sqlmodel import JSON, Field, Relationship, SQLModel
 
 
 class User(SQLModel, table=True):
-    __tablename__ = "users"
+    __tablename__: Any = "users"
 
     id: int | None = Field(default=None, primary_key=True)
     email: str = Field(index=True, unique=True)
@@ -22,7 +22,7 @@ class User(SQLModel, table=True):
 
 
 class MasterProfile(SQLModel, table=True):
-    __tablename__ = "master_profiles"
+    __tablename__: Any = "master_profiles"
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", ondelete="CASCADE", index=True)
@@ -41,7 +41,7 @@ class MasterProfile(SQLModel, table=True):
 
 
 class Experience(SQLModel, table=True):
-    __tablename__ = "experiences"
+    __tablename__: Any = "experiences"
 
     id: int | None = Field(default=None, primary_key=True)
     profile_id: int = Field(foreign_key="master_profiles.id", ondelete="CASCADE", index=True)
@@ -57,7 +57,7 @@ class Experience(SQLModel, table=True):
 
 
 class JobPosting(SQLModel, table=True):
-    __tablename__ = "job_postings"
+    __tablename__: Any = "job_postings"
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", ondelete="CASCADE", index=True)
@@ -82,7 +82,7 @@ class JobPosting(SQLModel, table=True):
 
 
 class TailoredArtifact(SQLModel, table=True):
-    __tablename__ = "tailored_artifacts"
+    __tablename__: Any = "tailored_artifacts"
 
     id: int | None = Field(default=None, primary_key=True)
     job_id: int = Field(foreign_key="job_postings.id", ondelete="CASCADE", index=True)
@@ -99,7 +99,7 @@ class TailoredArtifact(SQLModel, table=True):
 
 
 class SystemSetting(SQLModel, table=True):
-    __tablename__ = "system_settings"
+    __tablename__: Any = "system_settings"
 
     key: str = Field(primary_key=True, index=True)
     value_encrypted_or_plain: str

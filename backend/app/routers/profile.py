@@ -1,11 +1,12 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from backend.app.db import get_db
 from backend.app.models import Experience, MasterProfile, User
 from backend.app.schemas.profile import (
+    BulletItem,
     ExperienceCreate,
     ExperienceRead,
     ExperienceUpdate,
@@ -28,6 +29,7 @@ def get_or_create_default_profile(session: Session) -> MasterProfile:
         session.commit()
         session.refresh(user)
 
+    assert user.id is not None
     profile = session.exec(
         select(MasterProfile).where(MasterProfile.user_id == user.id)
     ).first()
@@ -44,6 +46,7 @@ def get_or_create_default_profile(session: Session) -> MasterProfile:
 
 
 def serialize_experience(exp: Experience) -> ExperienceRead:
+    bullets = [BulletItem.model_validate(b) for b in (exp.bullets_json or [])]
     return ExperienceRead(
         id=exp.id,  # type: ignore[arg-type]
         profile_id=exp.profile_id,
@@ -53,7 +56,7 @@ def serialize_experience(exp: Experience) -> ExperienceRead:
         start_date=exp.start_date,
         end_date=exp.end_date,
         is_current=exp.is_current,
-        bullets_json=exp.bullets_json or [],
+        bullets_json=bullets,
     )
 
 
@@ -61,7 +64,7 @@ def serialize_profile(profile: MasterProfile, session: Session) -> ProfileRead:
     experiences = session.exec(
         select(Experience)
         .where(Experience.profile_id == profile.id)
-        .order_by(Experience.id)
+        .order_by(col(Experience.id))
     ).all()
 
     return ProfileRead(

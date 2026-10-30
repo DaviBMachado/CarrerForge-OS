@@ -21,6 +21,7 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.1.0",
+    "pyright>=1.1.414"
 ]
 
 [tool.setuptools.packages.find]
@@ -72,3 +73,12 @@ testpaths = ["backend/tests", "tests"]
 python_files = ["test_*.py", "*_test.py"]
 norecursedirs = [".git", ".venv", "frontend", "_tools", "companies", "general-resumes", ".backlogmd"]
 addopts = "-ra -q"
+
+[tool.pyright]
+include = ["backend"]
+exclude = [
+    "backend/alembic",
+    ".venv",
+]
+pythonVersion = "3.11"
+reportMissingTypeStubs = false

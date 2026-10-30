@@ -35,6 +35,7 @@ def session():
 
 
 def test_table_creation(session: Session):
+    assert session.bind is not None
     inspector = inspect(session.bind)
     tables = inspector.get_table_names()
     expected_tables = {
@@ -54,6 +55,7 @@ def test_user_and_profile_cascade(session: Session):
     session.commit()
     session.refresh(user)
 
+    assert user.id is not None
     profile = MasterProfile(
         user_id=user.id,
         full_name="Jane Doe",
@@ -83,10 +85,12 @@ def test_profile_and_experience_cascade(session: Session):
     session.add(user)
     session.commit()
 
+    assert user.id is not None
     profile = MasterProfile(user_id=user.id, full_name="John Dev")
     session.add(profile)
     session.commit()
 
+    assert profile.id is not None
     exp = Experience(
         profile_id=profile.id,
         company="Tech Corp",
@@ -98,6 +102,7 @@ def test_profile_and_experience_cascade(session: Session):
     session.refresh(exp)
 
     assert exp.id is not None
+    assert exp.bullets_json is not None
     assert exp.bullets_json[0]["tags"] == ["python", "etl"]
 
     # Deleting profile deletes experience
@@ -113,6 +118,7 @@ def test_job_posting_and_tailored_artifact_cascade(session: Session):
     session.add(user)
     session.commit()
 
+    assert user.id is not None
     job = JobPosting(
         user_id=user.id,
         title="Software Architect",
@@ -122,6 +128,7 @@ def test_job_posting_and_tailored_artifact_cascade(session: Session):
     session.add(job)
     session.commit()
 
+    assert job.id is not None
     artifact = TailoredArtifact(
         job_id=job.id,
         selected_persona="Distributed Systems Specialist",
@@ -135,6 +142,7 @@ def test_job_posting_and_tailored_artifact_cascade(session: Session):
     session.refresh(artifact)
 
     assert artifact.id is not None
+    assert artifact.tailored_experience_json is not None
     assert artifact.tailored_experience_json[0]["role"] == "Lead Architect"
 
     session.delete(job)
