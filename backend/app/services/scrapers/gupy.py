@@ -28,7 +28,7 @@ def _extract_first(pattern: str, text: str) -> str | None:
 
 
 def parse_gupy_html(raw_html: str) -> list[ScrapedJob]:
-    # shortcut: regex parser on Gupy card markup, upgrade to JSON API or DOM parser if portal changes
+    # shortcut: regex parser on Gupy card markup, upgrade to DOM parser if portal changes
     blocks = re.findall(
         r"<article[^>]*class=[\"'][^\"']*job-card[^\"']*[\"'][^>]*>.*?</article>",
         raw_html,

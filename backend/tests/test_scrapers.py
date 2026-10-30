@@ -1,15 +1,20 @@
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from backend.app.models import JobPosting, TailoredArtifact, User
+from backend.app.services.scrapers.base import ScrapedJob
 from backend.app.services.scrapers.deduplicator import compute_job_hash, upsert_scraped_jobs
 from backend.app.services.scrapers.gupy import parse_gupy_html, scrape_gupy_jobs
 from backend.app.services.scrapers.linkedin import parse_linkedin_html, scrape_linkedin_jobs
+from backend.app.services.scrapers.runner import RUNS, stop_scraper_run, stream_run_events
+from backend.main import app
 
 LINKEDIN_SAMPLE_HTML = """
 <ul class="jobs-search__results-list">
@@ -261,3 +266,96 @@ def test_deduplication_composite_hash_and_upsert_preserves_tailored_drafts(sessi
         refreshed_job_1.artifacts[0].tailored_summary
         == "Custom tailored summary that must not be lost"
     )
+
+
+def test_scraper_runner_start_and_sse_stream():
+    RUNS.clear()
+    fake_job = ScrapedJob(
+        platform="linkedin",
+        external_id="li-999",
+        title="Async Python Dev",
+        company="StreamCorp",
+        description="FastAPI SSE testing",
+    )
+
+    async def fake_linkedin_scrape(**kwargs):
+        if kwargs.get("on_log"):
+            kwargs["on_log"]("Navigating to page 2...")
+            kwargs["on_log"]("Scraped 15 jobs...")
+        return [fake_job]
+
+    with (
+        patch(
+            "backend.app.services.scrapers.runner.scrape_linkedin_jobs",
+            side_effect=fake_linkedin_scrape,
+        ),
+        patch(
+            "backend.app.services.scrapers.runner.scrape_gupy_jobs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "backend.app.services.scrapers.runner.upsert_scraped_jobs",
+            return_value=[],
+        ),
+        TestClient(app) as client,
+    ):
+        start_resp = client.post(
+            "/api/scraper/start",
+            json={"query": "Python", "location": "Remote", "platforms": ["linkedin"]},
+        )
+        assert start_resp.status_code == 200
+        run_id = start_resp.json()["run_id"]
+        assert isinstance(run_id, str) and len(run_id) > 0
+
+        stream_resp = client.get(f"/api/scraper/stream/{run_id}")
+        assert stream_resp.status_code == 200
+        assert "text/event-stream" in stream_resp.headers["content-type"]
+
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in stream_resp.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        messages = [e["message"] for e in events]
+        assert any("Navigating to page 2..." in m for m in messages)
+        assert any("Scraped 15 jobs..." in m for m in messages)
+        assert messages[-1] == "Done."
+        assert events[-1]["progress"] == 100
+        assert events[-1]["status"] == "completed"
+
+
+def test_scraper_runner_stop_cancels_active_task():
+    RUNS.clear()
+    cancelled = False
+
+    async def slow_linkedin_scrape(**kwargs):
+        nonlocal cancelled
+        try:
+            await asyncio.sleep(30)
+            return []
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+
+    async def run_cancellation_flow():
+        with patch(
+            "backend.app.services.scrapers.runner.scrape_linkedin_jobs",
+            side_effect=slow_linkedin_scrape,
+        ):
+            from backend.app.services.scrapers.runner import start_scraper_run
+
+            run = await start_scraper_run(query="Python", platforms=["linkedin"])
+            await asyncio.sleep(0.05)
+            assert not run.done
+
+            stopped = await stop_scraper_run(run.run_id)
+            assert stopped is not None
+            assert stopped.status == "stopped"
+            assert stopped.done is True
+            assert cancelled is True
+
+            chunks = [chunk async for chunk in stream_run_events(run.run_id)]
+            assert any("Scraper aborted." in c for c in chunks)
+
+    asyncio.run(run_cancellation_flow())
