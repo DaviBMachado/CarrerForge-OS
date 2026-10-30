@@ -1,100 +1,228 @@
 import { useEffect, useState } from "react";
+import { api, HealthStatus, SystemSettings } from "./api";
+import { MasterProfileHub } from "./components/MasterProfileHub";
+import { SettingsModal } from "./components/SettingsModal";
 
-interface HealthStatus {
-  status: string;
-  app: string;
-  version: string;
-}
+type ActiveTab = "profile" | "status";
 
 export function App() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>("profile");
   const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<SystemSettings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [toast, setToast] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const notify = (type: "success" | "error", message: string) => {
+    setToast({ type, message });
+    window.setTimeout(() => {
+      setToast((prev) => (prev?.message === message ? null : prev));
+    }, 4500);
+  };
 
   useEffect(() => {
-    fetch("/api/health")
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        return res.json();
-      })
-      .then((data: HealthStatus) => {
-        setHealth(data);
-        setLoading(false);
-      })
-      .catch((err: Error) => {
-        setError(err.message);
-        setLoading(false);
+    api
+      .getHealth()
+      .then((data) => setHealth(data))
+      .catch((err: Error) => setHealthError(err.message));
+
+    api
+      .getSettings()
+      .then((data) => setSettings(data))
+      .catch(() => {
+        // fallback if settings endpoint not yet populated
       });
   }, []);
 
-  return (
-    <div
-      style={{
-        maxWidth: "600px",
-        margin: "0 auto",
-        padding: "2rem",
-        backgroundColor: "#1e293b",
-        borderRadius: "12px",
-        color: "#f8fafc",
-        boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
-      }}
-    >
-      <header style={{ marginBottom: "1.5rem" }}>
-        <h1 style={{ margin: "0 0 0.5rem 0", fontSize: "1.75rem", color: "#38bdf8" }}>
-          CareerForge OS
-        </h1>
-        <p style={{ margin: 0, color: "#94a3b8", fontSize: "0.95rem" }}>
-          Monolith Architecture & Unified Runtime
-        </p>
-      </header>
+  const isProviderConfigured = (s: SystemSettings | null): boolean => {
+    if (!s) return false;
+    switch (s.active_provider) {
+      case "gemini":
+        return Boolean(s.gemini_api_key);
+      case "openai":
+        return Boolean(s.openai_api_key);
+      case "claude":
+        return Boolean(s.anthropic_api_key);
+      case "ollama":
+        return Boolean(s.ollama_base_url);
+      default:
+        return false;
+    }
+  };
 
-      <section
-        style={{
-          padding: "1rem",
-          backgroundColor: "#0f172a",
-          borderRadius: "8px",
-          border: "1px solid #334155",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
-          <div
-            style={{
-              width: "10px",
-              height: "10px",
-              borderRadius: "50%",
-              backgroundColor: health?.status === "healthy" ? "#22c55e" : error ? "#ef4444" : "#eab308",
-            }}
-          />
-          <strong style={{ fontSize: "1rem" }}>
-            {loading ? "Checking System Status..." : health ? "System Online" : "System Error"}
-          </strong>
+  const providerLabel = settings?.active_provider
+    ? settings.active_provider.toUpperCase()
+    : "GEMINI";
+  const providerReady = isProviderConfigured(settings);
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="brand-group">
+          <div className="brand-title">
+            <span className="brand-dot" aria-hidden="true" />
+            <span>CareerForge OS</span>
+          </div>
+
+          <nav className="nav-tabs" aria-label="Main navigation">
+            <button
+              type="button"
+              className={`nav-tab ${activeTab === "profile" ? "active" : ""}`}
+              onClick={() => setActiveTab("profile")}
+              aria-current={activeTab === "profile" ? "page" : undefined}
+            >
+              Master Profile
+            </button>
+            <button
+              type="button"
+              className={`nav-tab ${activeTab === "status" ? "active" : ""}`}
+              onClick={() => setActiveTab("status")}
+              aria-current={activeTab === "status" ? "page" : undefined}
+            >
+              Runtime Status
+            </button>
+          </nav>
         </div>
 
-        {health && (
-          <div style={{ fontSize: "0.9rem", color: "#cbd5e1", lineHeight: "1.6" }}>
-            <div>
-              <strong>Service:</strong> {health.app}
-            </div>
-            <div>
-              <strong>Status:</strong> {health.status}
-            </div>
-            <div>
-              <strong>Version:</strong> {health.version}
-            </div>
-            <div>
-              <strong>Environment:</strong> Unified Monolith (FastAPI + Vite/React)
-            </div>
+        <div className="topbar-actions">
+          <div
+            className="status-pill"
+            title={
+              providerReady
+                ? `Active LLM Provider: ${providerLabel} (Key configured)`
+                : `Active LLM Provider: ${providerLabel} (Key missing)`
+            }
+          >
+            <span
+              className="status-dot"
+              style={{
+                backgroundColor: providerReady
+                  ? "var(--success)"
+                  : "var(--warning)",
+              }}
+            />
+            <span>LLM: {providerLabel}</span>
           </div>
-        )}
 
-        {error && (
-          <p style={{ color: "#f87171", fontSize: "0.9rem", margin: 0 }}>
-            Failed to connect to backend: {error}
-          </p>
+          <div className="status-pill">
+            <span
+              className="status-dot"
+              style={{
+                backgroundColor:
+                  health?.status === "healthy"
+                    ? "var(--success)"
+                    : healthError
+                      ? "var(--danger)"
+                      : "var(--warning)",
+              }}
+            />
+            <span>
+              {health?.status === "healthy"
+                ? `API v${health.version}`
+                : healthError
+                  ? "API Offline"
+                  : "Connecting..."}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setSettingsOpen(true)}
+          >
+            Settings
+          </button>
+        </div>
+      </header>
+
+      <main className="main-container">
+        {activeTab === "profile" ? (
+          <MasterProfileHub onNotify={notify} />
+        ) : (
+          <section className="panel" aria-labelledby="runtime-status-heading">
+            <div className="panel-header">
+              <h1 id="runtime-status-heading" className="panel-title">
+                Monolith Runtime & Provider Status
+              </h1>
+            </div>
+            {health && (
+              <div
+                style={{
+                  display: "grid",
+                  gap: "0.5rem",
+                  fontSize: "0.9rem",
+                  color: "var(--ink-secondary)",
+                }}
+              >
+                <div>
+                  <strong style={{ color: "var(--ink-primary)" }}>
+                    Service:
+                  </strong>{" "}
+                  {health.app}
+                </div>
+                <div>
+                  <strong style={{ color: "var(--ink-primary)" }}>
+                    Status:
+                  </strong>{" "}
+                  {health.status}
+                </div>
+                <div>
+                  <strong style={{ color: "var(--ink-primary)" }}>
+                    Version:
+                  </strong>{" "}
+                  {health.version}
+                </div>
+                <div>
+                  <strong style={{ color: "var(--ink-primary)" }}>
+                    Active LLM Provider:
+                  </strong>{" "}
+                  {providerLabel} (
+                  {providerReady ? "Configured" : "Awaiting API Key"})
+                </div>
+              </div>
+            )}
+            {healthError && (
+              <p style={{ color: "var(--danger)" }}>
+                Failed to connect to backend: {healthError}
+              </p>
+            )}
+          </section>
         )}
-      </section>
+      </main>
+
+      <SettingsModal
+        isOpen={settingsOpen}
+        initialSettings={settings}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={(updated) => {
+          setSettings(updated);
+          notify(
+            "success",
+            `Settings saved. Active provider: ${updated.active_provider.toUpperCase()}`
+          );
+        }}
+      />
+
+      {toast && (
+        <div
+          className={`toast-banner ${toast.type}`}
+          role="status"
+          aria-live="polite"
+        >
+          <span>{toast.message}</span>
+          <button
+            type="button"
+            className="tag-remove"
+            onClick={() => setToast(null)}
+            aria-label="Dismiss notification"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }

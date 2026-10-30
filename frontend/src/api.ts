@@ -1,0 +1,141 @@
+export type LLMProvider = "gemini" | "openai" | "claude" | "ollama";
+
+export interface BulletItem {
+  text: string;
+  tags: string[];
+}
+
+export interface ExperienceItem {
+  id: number;
+  profile_id: number;
+  company: string;
+  role: string;
+  location: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  is_current: boolean;
+  bullets_json: BulletItem[];
+}
+
+export interface ExperiencePayload {
+  company: string;
+  role: string;
+  location?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_current?: boolean;
+  bullets_json?: BulletItem[];
+}
+
+export interface ContactInfo {
+  email?: string;
+  phone?: string;
+  location?: string;
+  linkedin?: string;
+  github?: string;
+  [key: string]: string | undefined;
+}
+
+export type SkillsMatrix = Record<string, string[]>;
+
+export interface MasterProfile {
+  id: number;
+  user_id: number;
+  full_name: string;
+  headline: string | null;
+  contact_json: ContactInfo | null;
+  summary_base: string | null;
+  skills_json: SkillsMatrix | null;
+  languages_json: string[] | null;
+  experiences: ExperienceItem[];
+}
+
+export interface ProfileUpdatePayload {
+  full_name?: string;
+  headline?: string | null;
+  contact_json?: ContactInfo | null;
+  summary_base?: string | null;
+  skills_json?: SkillsMatrix | null;
+  languages_json?: string[] | null;
+}
+
+export interface LegacyImportResult {
+  status: string;
+  profile_id: number;
+  experiences_count: number;
+  specs_scanned: number;
+  total_bullets: number;
+}
+
+export interface SystemSettings {
+  active_provider: LLMProvider;
+  gemini_api_key: string | null;
+  openai_api_key: string | null;
+  anthropic_api_key: string | null;
+  ollama_base_url: string;
+  scraper_headless: boolean;
+  scraper_timeout: number;
+}
+
+export type SettingsUpdatePayload = Partial<SystemSettings>;
+
+export interface HealthStatus {
+  status: string;
+  app: string;
+  version: string;
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    ...init,
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const errJson = (await res.json()) as { detail?: string };
+      if (errJson.detail) detail = errJson.detail;
+    } catch {
+      // ignore non-json error body
+    }
+    throw new Error(detail);
+  }
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  return (await res.json()) as T;
+}
+
+export const api = {
+  getHealth: () => request<HealthStatus>("/api/health"),
+  getProfile: () => request<MasterProfile>("/api/profile"),
+  updateProfile: (data: ProfileUpdatePayload) =>
+    request<MasterProfile>("/api/profile", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  createExperience: (data: ExperiencePayload) =>
+    request<ExperienceItem>("/api/profile/experiences", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateExperience: (id: number, data: ExperiencePayload) =>
+    request<ExperienceItem>(`/api/profile/experiences/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteExperience: (id: number) =>
+    request<void>(`/api/profile/experiences/${id}`, {
+      method: "DELETE",
+    }),
+  importLegacyProfile: () =>
+    request<LegacyImportResult>("/api/profile/import-legacy", {
+      method: "POST",
+    }),
+  getSettings: () => request<SystemSettings>("/api/settings"),
+  saveSettings: (data: SettingsUpdatePayload) =>
+    request<SystemSettings>("/api/settings", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+};
