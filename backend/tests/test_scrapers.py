@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -367,11 +368,13 @@ def test_scraper_jobs_list_and_archive_status_update():
         initial_resp = client.get("/api/scraper/jobs")
         assert initial_resp.status_code == 200
 
+        suffix = uuid.uuid4().hex[:8]
+        ext_id = f"gupy-radar-{suffix}"
         fake_job = ScrapedJob(
             platform="gupy",
-            external_id="gupy-radar-1",
-            title="Fullstack Engineer",
-            company="RadarTech",
+            external_id=ext_id,
+            title=f"Fullstack Engineer {suffix}",
+            company=f"RadarTech {suffix}",
             location="São Paulo, SP",
             description="React and FastAPI role",
             url="https://radartech.gupy.io/jobs/1",
@@ -402,9 +405,9 @@ def test_scraper_jobs_list_and_archive_status_update():
         jobs_resp = client.get("/api/scraper/jobs")
         assert jobs_resp.status_code == 200
         jobs = jobs_resp.json()
-        target = next((j for j in jobs if j["external_id"] == "gupy-radar-1"), None)
+        target = next((j for j in jobs if j["external_id"] == ext_id), None)
         assert target is not None
-        assert target["title"] == "Fullstack Engineer"
+        assert target["title"] == f"Fullstack Engineer {suffix}"
         assert target["status"] == "discovered"
 
         patch_resp = client.patch(

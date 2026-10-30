@@ -1,4 +1,5 @@
 import json
+
 import httpx
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -107,15 +108,15 @@ def test_orchestrator_routes_to_gemini_openai_claude_and_ollama(session: Session
             return httpx.Response(
                 200,
                 json={
-                    "candidates": [
-                        {"content": {"parts": [{"text": '{"result": "from_gemini"}'}]}}
-                    ]
+                    "candidates": [{"content": {"parts": [{"text": '{"result": "from_gemini"}'}]}}]
                 },
             )
         if "api.openai.com" in url:
             return httpx.Response(
                 200,
-                json={"choices": [{"message": {"content": "```json\n{\"result\": \"from_openai\"}\n```"}}]},
+                json={
+                    "choices": [{"message": {"content": '```json\n{"result": "from_openai"}\n```'}}]
+                },
             )
         if "api.anthropic.com" in url:
             return httpx.Response(

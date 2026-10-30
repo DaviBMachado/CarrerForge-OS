@@ -261,7 +261,9 @@ def select_persona(
 
 def _strip_json_fences(raw_text: str) -> str:
     cleaned = raw_text.strip()
-    fence_match = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    fence_match = re.match(
+        r"^```(?:json)?\s*(.*?)\s*```$", cleaned, flags=re.DOTALL | re.IGNORECASE
+    )
     if fence_match:
         return fence_match.group(1).strip()
     return cleaned
@@ -420,7 +422,9 @@ class LLMOrchestrator:
             raise
         except httpx.HTTPError as exc:
             safe_msg = _redact_secret(str(exc), secret)
-            raise LLMProviderError(f"HTTP error communicating with {provider}: {safe_msg}") from None
+            raise LLMProviderError(
+                f"HTTP error communicating with {provider}: {safe_msg}"
+            ) from None
 
     def _call_gemini(
         self,
@@ -505,7 +509,9 @@ class LLMOrchestrator:
         url = "https://api.anthropic.com/v1/messages"
         effective_system = system_prompt
         if json_mode:
-            json_instruction = "Respond strictly with a valid JSON object without markdown wrappers."
+            json_instruction = (
+                "Respond strictly with a valid JSON object without markdown wrappers."
+            )
             effective_system = (
                 f"{system_prompt}\n\n{json_instruction}".strip()
                 if system_prompt
