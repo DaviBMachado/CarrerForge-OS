@@ -92,6 +92,10 @@ async def stop_scraper(
     return {"status": run.status, "run_id": run.run_id}
 
 
+class JobStatusUpdateRequest(BaseModel):
+    status: str
+
+
 @router.get("/jobs", response_model=list[JobPosting])
 def list_scraped_jobs(session: DBSession) -> list[JobPosting]:
     profile = get_or_create_default_profile(session)
@@ -101,3 +105,23 @@ def list_scraped_jobs(session: DBSession) -> list[JobPosting]:
         .order_by(col(JobPosting.id).desc())
     ).all()
     return list(jobs)
+
+
+@router.patch("/jobs/{job_id}/status", response_model=JobPosting)
+def update_job_status(
+    job_id: int,
+    payload: JobStatusUpdateRequest,
+    session: DBSession,
+) -> JobPosting:
+    profile = get_or_create_default_profile(session)
+    job = session.get(JobPosting, job_id)
+    if not job or job.user_id != profile.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job posting not found",
+        )
+    job.status = payload.status
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job

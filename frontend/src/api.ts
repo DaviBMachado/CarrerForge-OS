@@ -119,6 +119,48 @@ export interface PreviewResponse {
   pdf_base64: string;
 }
 
+export interface JobPostingItem {
+  id: number;
+  user_id: number;
+  platform: string;
+  external_id: string | null;
+  title: string;
+  company: string;
+  location: string | null;
+  remote_type: string | null;
+  url: string | null;
+  raw_description: string;
+  cleaned_text: string | null;
+  language: string;
+  status: string;
+  created_at: string;
+}
+
+export interface ScraperSessionStatus {
+  authenticated: boolean;
+  linkedin: boolean;
+  gupy: boolean;
+  session_dir: string;
+  status?: string;
+}
+
+export interface ScraperStartPayload {
+  query: string;
+  location: string;
+  platforms: string[];
+  remote?: boolean;
+  max_jobs?: number;
+}
+
+export interface ScraperStreamEvent {
+  run_id: string;
+  message: string;
+  progress: number;
+  status: string;
+  jobs_scraped?: number;
+  jobs_saved?: number;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
@@ -203,4 +245,26 @@ export const api = {
     const blob = await res.blob();
     return { blob, filename };
   },
+  getScraperSessionStatus: () =>
+    request<ScraperSessionStatus>("/api/scraper/session/status"),
+  launchScraperLogin: () =>
+    request<ScraperSessionStatus>("/api/scraper/session/login", {
+      method: "POST",
+    }),
+  startScraper: (payload: ScraperStartPayload) =>
+    request<{ run_id: string }>("/api/scraper/start", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  stopScraper: (runId?: string) =>
+    request<{ status: string; run_id: string }>("/api/scraper/stop", {
+      method: "POST",
+      body: JSON.stringify({ run_id: runId ?? null }),
+    }),
+  getScrapedJobs: () => request<JobPostingItem[]>("/api/scraper/jobs"),
+  updateJobStatus: (jobId: number, status: string) =>
+    request<JobPostingItem>(`/api/scraper/jobs/${jobId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
 };

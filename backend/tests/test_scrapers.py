@@ -359,3 +359,57 @@ def test_scraper_runner_stop_cancels_active_task():
             assert any("Scraper aborted." in c for c in chunks)
 
     asyncio.run(run_cancellation_flow())
+
+
+def test_scraper_jobs_list_and_archive_status_update():
+    with TestClient(app) as client:
+        # Ensure default profile/user exists and insert a scraped job
+        initial_resp = client.get("/api/scraper/jobs")
+        assert initial_resp.status_code == 200
+
+        fake_job = ScrapedJob(
+            platform="gupy",
+            external_id="gupy-radar-1",
+            title="Fullstack Engineer",
+            company="RadarTech",
+            location="São Paulo, SP",
+            description="React and FastAPI role",
+            url="https://radartech.gupy.io/jobs/1",
+        )
+
+        async def fake_gupy_scrape(**kwargs):
+            return [fake_job]
+
+        with (
+            patch(
+                "backend.app.services.scrapers.runner.scrape_gupy_jobs",
+                side_effect=fake_gupy_scrape,
+            ),
+            patch(
+                "backend.app.services.scrapers.runner.scrape_linkedin_jobs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            start_resp = client.post(
+                "/api/scraper/start",
+                json={"query": "React", "location": "São Paulo", "platforms": ["gupy"]},
+            )
+            assert start_resp.status_code == 200
+            run_id = start_resp.json()["run_id"]
+            client.get(f"/api/scraper/stream/{run_id}")
+
+        jobs_resp = client.get("/api/scraper/jobs")
+        assert jobs_resp.status_code == 200
+        jobs = jobs_resp.json()
+        target = next((j for j in jobs if j["external_id"] == "gupy-radar-1"), None)
+        assert target is not None
+        assert target["title"] == "Fullstack Engineer"
+        assert target["status"] == "discovered"
+
+        patch_resp = client.patch(
+            f"/api/scraper/jobs/{target['id']}/status",
+            json={"status": "archived"},
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["status"] == "archived"

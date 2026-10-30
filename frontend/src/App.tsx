@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
-import { api, HealthStatus, SystemSettings } from "./api";
+import { api, HealthStatus, JobPostingItem, SystemSettings } from "./api";
+import { JobRadar } from "./components/JobRadar";
 import { MasterProfileHub } from "./components/MasterProfileHub";
 import { ResumePreviewer } from "./components/ResumePreviewer";
 import { SettingsModal } from "./components/SettingsModal";
 
-type ActiveTab = "profile" | "compiler" | "status";
+type ActiveTab = "radar" | "profile" | "compiler" | "status";
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>("profile");
+  const [activeTab, setActiveTab] = useState<ActiveTab>("radar");
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [settings, setSettings] = useState<SystemSettings | null>(null);
@@ -69,6 +70,14 @@ export function App() {
           </div>
 
           <nav className="nav-tabs" aria-label="Main navigation">
+            <button
+              type="button"
+              className={`nav-tab ${activeTab === "radar" ? "active" : ""}`}
+              onClick={() => setActiveTab("radar")}
+              aria-current={activeTab === "radar" ? "page" : undefined}
+            >
+              Job Radar
+            </button>
             <button
               type="button"
               className={`nav-tab ${activeTab === "profile" ? "active" : ""}`}
@@ -148,7 +157,18 @@ export function App() {
       </header>
 
       <main className="main-container">
-        {activeTab === "profile" ? (
+        {activeTab === "radar" ? (
+          <JobRadar
+            onNotify={notify}
+            onTailorResume={(job: JobPostingItem) => {
+              setActiveTab("compiler");
+              notify(
+                "success",
+                `Opened Resume Previewer for ${job.title} at ${job.company}`
+              );
+            }}
+          />
+        ) : activeTab === "profile" ? (
           <MasterProfileHub onNotify={notify} />
         ) : activeTab === "compiler" ? (
           <ResumePreviewer onNotify={notify} />
