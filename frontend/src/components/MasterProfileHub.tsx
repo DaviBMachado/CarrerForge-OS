@@ -824,10 +824,11 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
             {experiences.map((exp) => {
               const isOpen = Boolean(expandedIds[exp.id]);
               const panelId = `exp-panel-${exp.id}`;
-              const dateRange = [
-                exp.start_date || "N/A",
-                exp.is_current ? "Present" : exp.end_date || "Present",
-              ].join(" — ");
+              const endLabel = exp.is_current ? "Present" : exp.end_date;
+              const dateRange =
+                exp.start_date && endLabel && exp.start_date !== endLabel
+                  ? `${exp.start_date} — ${endLabel}`
+                  : exp.start_date || endLabel || "N/A";
 
               return (
                 <div key={exp.id} className="accordion-item">

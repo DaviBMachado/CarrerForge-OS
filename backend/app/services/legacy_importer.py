@@ -1,4 +1,3 @@
-import json
 import re
 from pathlib import Path
 from typing import Any
@@ -7,12 +6,45 @@ from sqlmodel import Session, select
 
 from backend.app.models import Experience, MasterProfile
 
+_DATE_TOKEN_PATTERN = r"(?:\d{1,2}/\d{4}|\d{4}|[A-Za-zÀ-ÿ]{3,9}\.?\s+\d{4})"
+_END_TOKEN_PATTERN = rf"(?:{_DATE_TOKEN_PATTERN}|presente?|atual|current)"
+_DATE_RANGE_RE = re.compile(
+    rf"^\s*({_DATE_TOKEN_PATTERN})\s*[-–—]\s*({_END_TOKEN_PATTERN})\s*$",
+    re.IGNORECASE,
+)
+_SINGLE_DATE_RE = re.compile(rf"^\s*({_DATE_TOKEN_PATTERN})\s*$", re.IGNORECASE)
+_YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
+
+_PROJECT_INDICATOR_RE = re.compile(
+    r"\b(?:"
+    r"projeto|projetos|project|projects|hackathon|case|cases|"
+    r"prêmio|premio|award|\d+[º°]\s*lugar|\d+(?:st|nd|rd|th)\s*place|"
+    r"desafio|challenge"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_ROLE_INDICATOR_RE = re.compile(
+    r"\b(?:"
+    r"engenheiro|engenheira|desenvolvedor|desenvolvedora|estagiário|estagiária|"
+    r"analista|arquiteto|arquiteta|tech\s+lead|líder|lider|consultor|consultora|"
+    r"software\s+engineer|developer|intern|architect|manager|lead|specialist|"
+    r"pleno|sênior|senior|júnior|junior|trainee"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_TECH_LINE_RE = re.compile(
+    r"^(?:\*\*)?(?:tecnologias|technologies|tech\s*stack|stack|ferramentas|tools)(?:\*\*)?\s*:\s*(.+)$",
+    re.IGNORECASE,
+)
+
 
 def derive_tags(text: str, explicit_tag: str | None = None) -> list[str]:
-    tags = set()
+    tags: set[str] = set()
     if explicit_tag:
-        clean_exp = explicit_tag.strip().strip(":*")
-        if clean_exp:
+        clean_exp = explicit_tag.strip().strip(":*.")
+        if clean_exp and len(clean_exp.split()) <= 3:
             tags.add(clean_exp)
 
     keywords = [
@@ -22,11 +54,14 @@ def derive_tags(text: str, explicit_tag: str | None = None) -> list[str]:
         "Step Functions",
         "S3",
         "Athena",
+        "EC2",
+        "IAM",
         "DynamoDB",
         "PostgreSQL",
         "MySQL",
+        "SQL",
+        "NoSQL",
         "REST",
-        "API",
         "APIs RESTful",
         "Angular",
         "TypeScript",
@@ -34,6 +69,7 @@ def derive_tags(text: str, explicit_tag: str | None = None) -> list[str]:
         "Java",
         "Docker",
         "Terraform",
+        "Serverless",
         "CI/CD",
         "Datadog",
         "CloudWatch",
@@ -41,8 +77,12 @@ def derive_tags(text: str, explicit_tag: str | None = None) -> list[str]:
         "pytest",
         "RAG",
         "LLM",
+        "IARA",
         "LangChain",
         "FAISS",
+        "boto3",
+        "httpx",
+        "Pydantic",
         "Scrum",
         "Multi-tenant",
         "JWT",
@@ -53,6 +93,144 @@ def derive_tags(text: str, explicit_tag: str | None = None) -> list[str]:
             tags.add(kw)
 
     return sorted(tags)
+
+
+def _extract_tech_list_tags(raw_tech_list: str) -> list[str]:
+    extracted: list[str] = []
+    for item in raw_tech_list.split(","):
+        cleaned = re.sub(r"\([^)]*\)", "", item).strip().strip(".*:")
+        if cleaned:
+            extracted.append(cleaned)
+    return extracted
+
+
+def _parse_experience_heading(
+    heading: str,
+    current_section: str,
+    last_employment_company: str | None,
+) -> tuple[dict[str, Any], str | None]:
+    paren_match = re.search(r"\(([^)]+)\)$", heading)
+    paren_text = paren_match.group(1).strip() if paren_match else ""
+    clean_heading = re.sub(r"\([^)]+\)$", "", heading).strip()
+
+    date_range_match = _DATE_RANGE_RE.match(paren_text) if paren_text else None
+    single_date_match = _SINGLE_DATE_RE.match(paren_text) if paren_text else None
+
+    section_is_projects = bool(re.search(r"projeto|project", current_section, re.IGNORECASE))
+    has_project_indicator = bool(
+        _PROJECT_INDICATOR_RE.search(heading) or _PROJECT_INDICATOR_RE.search(paren_text)
+    )
+    has_pipe_separator = "|" in clean_heading
+    has_role_indicator = bool(_ROLE_INDICATOR_RE.search(clean_heading))
+
+    is_project = (
+        section_is_projects
+        or has_project_indicator
+        or (not date_range_match and not (has_pipe_separator and single_date_match))
+        or (not has_pipe_separator and not has_role_indicator)
+    )
+
+    start_date: str | None = None
+    end_date: str | None = None
+    is_current = False
+
+    if date_range_match:
+        start_date = date_range_match.group(1).strip()
+        end_date = date_range_match.group(2).strip()
+        if re.search(r"presente?|atual|current", end_date, re.IGNORECASE):
+            is_current = True
+    elif single_date_match:
+        start_date = single_date_match.group(1).strip()
+        end_date = start_date
+    elif paren_text:
+        year_match = _YEAR_RE.search(paren_text)
+        if year_match:
+            start_date = year_match.group(1)
+            end_date = start_date
+
+    if is_project:
+        if has_pipe_separator:
+            parts = [p.strip() for p in clean_heading.split("|", 1)]
+            role = parts[0]
+            base_company = parts[1]
+        else:
+            role = clean_heading
+            base_company = last_employment_company or ""
+
+        context_note = ""
+        if paren_text and not date_range_match and not single_date_match:
+            context_note = paren_text
+
+        if base_company and context_note:
+            company = f"{base_company} · Projeto ({context_note})"
+        elif base_company:
+            company = f"{base_company} · Projeto"
+        elif context_note:
+            company = f"Projeto ({context_note})"
+        else:
+            company = "Projeto"
+
+        return (
+            {
+                "company": company,
+                "role": role,
+                "location": "São Paulo, SP",
+                "start_date": start_date,
+                "end_date": end_date,
+                "is_current": is_current,
+                "bullets_json": [],
+            },
+            last_employment_company,
+        )
+
+    # Standard employment entry
+    if has_pipe_separator:
+        parts = clean_heading.split("|", 1)
+        role = parts[0].strip()
+        company = parts[1].strip()
+    elif "—" in clean_heading or "-" in clean_heading:
+        sep = "—" if "—" in clean_heading else "-"
+        parts = clean_heading.split(sep, 1)
+        first, second = parts[0].strip(), parts[1].strip()
+        if _ROLE_INDICATOR_RE.search(first) and not _ROLE_INDICATOR_RE.search(second):
+            role, company = first, second
+        else:
+            company, role = first, second
+    else:
+        role = clean_heading
+        company = last_employment_company or "Experiência Profissional"
+
+    return (
+        {
+            "company": company,
+            "role": role,
+            "location": "São Paulo, SP",
+            "start_date": start_date,
+            "end_date": end_date,
+            "is_current": is_current,
+            "bullets_json": [],
+        },
+        company,
+    )
+
+
+def _finalize_experience_bullets(exp: dict[str, Any]) -> None:
+    extra_tags: list[str] = exp.pop("_extra_tech_tags", [])
+    if not extra_tags or not exp["bullets_json"]:
+        return
+
+    for bullet in exp["bullets_json"]:
+        b_text = bullet["text"]
+        b_tags = set(bullet["tags"])
+        for tech in extra_tags:
+            if re.search(rf"\b{re.escape(tech)}\b", b_text, re.IGNORECASE):
+                b_tags.add(tech)
+        bullet["tags"] = sorted(b_tags)
+
+    # Ensure stack technologies declared for the project are present on the last bullet
+    last_tags = set(exp["bullets_json"][-1]["tags"])
+    last_tags.update(extra_tags)
+    exp["bullets_json"][-1]["tags"] = sorted(last_tags)
 
 
 def parse_markdown_resume(md_content: str) -> dict[str, Any]:
@@ -71,6 +249,7 @@ def parse_markdown_resume(md_content: str) -> dict[str, Any]:
     current_subsection = ""
     summary_lines = []
     current_exp: dict[str, Any] | None = None
+    last_employment_company: str | None = None
 
     for line in lines:
         if line.startswith("# ") and not current_section:
@@ -103,6 +282,7 @@ def parse_markdown_resume(md_content: str) -> dict[str, Any]:
             current_section = sec_title
             current_subsection = ""
             if current_exp:
+                _finalize_experience_bullets(current_exp)
                 data["experiences"].append(current_exp)
                 current_exp = None
             continue
@@ -129,110 +309,55 @@ def parse_markdown_resume(md_content: str) -> dict[str, Any]:
         elif current_section == "Experiência Profissional":
             if line.startswith("### "):
                 if current_exp:
+                    _finalize_experience_bullets(current_exp)
                     data["experiences"].append(current_exp)
                 heading = line[4:].strip()
-                dates_match = re.search(r"\(([^)]+)\)$", heading)
-                date_str = dates_match.group(1) if dates_match else ""
-                clean_heading = re.sub(r"\([^)]+\)$", "", heading).strip()
-
-                if "|" in clean_heading:
-                    parts = clean_heading.split("|", 1)
-                    role = parts[0].strip()
-                    company = parts[1].strip()
-                elif "—" in clean_heading or "-" in clean_heading:
-                    sep = "—" if "—" in clean_heading else "-"
-                    parts = clean_heading.split(sep, 1)
-                    company = parts[0].strip()
-                    role = parts[1].strip()
-                else:
-                    role = clean_heading
-                    company = "Projetos Relevantes"
-
-                start_date = None
-                end_date = None
-                is_current = False
-                if date_str:
-                    if "-" in date_str:
-                        d_parts = date_str.split("-")
-                        start_date = d_parts[0].strip()
-                        end_date = d_parts[1].strip()
-                        if "present" in end_date.lower() or "atual" in end_date.lower():
-                            is_current = True
-                    else:
-                        start_date = date_str
-                        end_date = date_str
-
-                current_exp = {
-                    "company": company,
-                    "role": role,
-                    "location": "São Paulo, SP",
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "is_current": is_current,
-                    "bullets_json": [],
-                }
+                current_exp, last_employment_company = _parse_experience_heading(
+                    heading=heading,
+                    current_section=current_section,
+                    last_employment_company=last_employment_company,
+                )
 
             elif line.startswith("- ") and current_exp:
                 bullet_content = line[2:].strip()
-                tag_match = re.match(r"^\*\*([^*:]+):?\*\*:?\s*(.*)$", bullet_content)
-                if tag_match:
-                    tag_name = tag_match.group(1).strip()
-                    text = tag_match.group(2).strip() or bullet_content
-                    tags = derive_tags(text, tag_name)
-                    current_exp["bullets_json"].append({"text": text, "tags": tags})
+                tech_match = _TECH_LINE_RE.match(bullet_content)
+                if tech_match:
+                    tech_tags = _extract_tech_list_tags(tech_match.group(1))
+                    current_exp.setdefault("_extra_tech_tags", []).extend(tech_tags)
+                    continue
+
+                topic_match = re.match(r"^\*\*([^*:]+):?\*\*:?\s*(.*)$", bullet_content)
+                if topic_match:
+                    topic = topic_match.group(1).strip().rstrip(":")
+                    body = topic_match.group(2).strip()
+                    full_text = f"{topic}: {body}" if body else topic
+                    tags = derive_tags(full_text)
+                    current_exp["bullets_json"].append({"text": full_text, "tags": tags})
                 else:
                     tags = derive_tags(bullet_content)
                     current_exp["bullets_json"].append({"text": bullet_content, "tags": tags})
 
     if current_exp:
+        _finalize_experience_bullets(current_exp)
         data["experiences"].append(current_exp)
 
     return data
-
-
-def scan_specs_directory(specs_dir: Path) -> tuple[int, list[dict[str, Any]]]:
-    if not specs_dir.is_dir():
-        return 0, []
-
-    spec_files = list(specs_dir.glob("*.json"))
-    additional_bullets: list[dict[str, Any]] = []
-
-    for spec_file in spec_files:
-        try:
-            content = json.loads(spec_file.read_text(encoding="utf-8"))
-            for section in content.get("sections", []):
-                sec_title = section.get("title", "").lower()
-                if "experiência" in sec_title or "experience" in sec_title:
-                    for block in section.get("blocks", []):
-                        if block.get("type") == "bullet":
-                            b_text = block.get("text", "").strip()
-                            if b_text:
-                                tags = derive_tags(b_text)
-                                additional_bullets.append({"text": b_text, "tags": tags})
-        except Exception:
-            continue
-
-    return len(spec_files), additional_bullets
 
 
 def import_legacy_data(
     session: Session,
     profile: MasterProfile,
     resume_path: Path | None = None,
-    specs_dir: Path | None = None,
 ) -> dict[str, Any]:
     project_root = Path(__file__).resolve().parent.parent.parent.parent
     if resume_path is None:
         resume_path = project_root / "general-resumes" / "Davi_Bernardes_Machado_Curriculo_ATS.md"
-    if specs_dir is None:
-        specs_dir = project_root / "_tools" / "specs"
 
     if not resume_path.is_file():
         raise FileNotFoundError(f"Resume file not found at {resume_path}")
 
     md_content = resume_path.read_text(encoding="utf-8")
     parsed = parse_markdown_resume(md_content)
-    specs_count, spec_bullets = scan_specs_directory(specs_dir)
 
     # Update profile fields
     profile.full_name = parsed["full_name"]
@@ -257,15 +382,7 @@ def import_legacy_data(
     experiences_created = 0
 
     for exp_data in parsed["experiences"]:
-        # Merge spec bullets if this is the primary Itaú experience
         bullets = list(exp_data["bullets_json"])
-        if "itaú" in exp_data["company"].lower():
-            existing_texts = {b["text"].lower() for b in bullets}
-            for sb in spec_bullets:
-                clean_t = sb["text"].lower()
-                if clean_t not in existing_texts:
-                    existing_texts.add(clean_t)
-                    bullets.append(sb)
 
         assert profile.id is not None
         experience = Experience(
@@ -289,6 +406,6 @@ def import_legacy_data(
         "status": "imported",
         "profile_id": profile.id,
         "experiences_count": experiences_created,
-        "specs_scanned": specs_count,
+        "specs_scanned": 0,
         "total_bullets": total_bullets,
     }

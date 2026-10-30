@@ -362,9 +362,7 @@ class ResumeCompiler:
         buf.seek(0)
         return buf, page_count
 
-    def compile_cover_letter_pdf(
-        self, letter: CoverLetterSpec | dict[str, Any]
-    ) -> io.BytesIO:
+    def compile_cover_letter_pdf(self, letter: CoverLetterSpec | dict[str, Any]) -> io.BytesIO:
         parsed = self._coerce_cover_letter(letter)
         buf = io.BytesIO()
         display_title = parsed.title or parsed.name or "Cover Letter"
@@ -405,18 +403,14 @@ class ResumeCompiler:
         if parsed.recipient:
             story.append(Paragraph(escape(parsed.recipient), styles["subheading"]))
         if parsed.subject:
-            story.append(
-                Paragraph(f"<b>{escape(parsed.subject)}</b>", styles["paragraph"])
-            )
+            story.append(Paragraph(f"<b>{escape(parsed.subject)}</b>", styles["paragraph"]))
         if parsed.greeting:
             story.append(Spacer(1, 4))
             story.append(Paragraph(escape(parsed.greeting), styles["paragraph"]))
 
         paragraphs = list(parsed.paragraphs)
         if parsed.body:
-            paragraphs.extend(
-                p.strip() for p in parsed.body.split("\n\n") if p.strip()
-            )
+            paragraphs.extend(p.strip() for p in parsed.body.split("\n\n") if p.strip())
         for para in paragraphs:
             story.append(Spacer(1, 4))
             story.append(Paragraph(escape(para), styles["paragraph"]))

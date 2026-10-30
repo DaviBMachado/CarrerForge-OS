@@ -6,6 +6,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from backend.app.db import get_db
+from backend.app.services.legacy_importer import parse_markdown_resume
 from backend.main import app
 
 
@@ -149,9 +150,9 @@ def test_legacy_import_endpoint(client: TestClient):
     assert response.status_code == 200
     result = response.json()
     assert result["status"] == "imported"
-    assert result["experiences_count"] >= 1
-    assert result["total_bullets"] > 0
-    assert result["specs_scanned"] >= 1
+    assert result["experiences_count"] == 2
+    assert result["total_bullets"] == 12
+    assert result["specs_scanned"] == 0
 
     # Verify profile data populated
     profile_res = client.get("/api/profile")
@@ -159,9 +160,62 @@ def test_legacy_import_endpoint(client: TestClient):
     p = profile_res.json()
     assert p["full_name"] == "Davi Bernardes Machado"
     assert p["contact_json"]["email"] == "davibernardes021@gmail.com"
-    assert len(p["experiences"]) >= 1
-    assert len(p["experiences"][0]["bullets_json"]) > 0
-    # Check that tags are populated
-    first_bullet = p["experiences"][0]["bullets_json"][0]
-    assert "text" in first_bullet
-    assert isinstance(first_bullet["tags"], list)
+    assert len(p["experiences"]) == 2
+
+    # 1st entry: canonical employment experience without spec duplicates
+    exp_employment = p["experiences"][0]
+    assert exp_employment["company"] == "Itaú Unibanco"
+    assert exp_employment["role"] == "Estagiário em Engenharia de Software Backend"
+    assert exp_employment["start_date"] == "02/2024"
+    assert exp_employment["end_date"] == "06/2025"
+    assert len(exp_employment["bullets_json"]) == 8
+    first_bullet = exp_employment["bullets_json"][0]
+    assert first_bullet["text"].startswith("Agentes conversacionais e IA generativa:")
+    assert "Python" in first_bullet["tags"]
+    assert "RAG" in first_bullet["tags"]
+
+    # 2nd entry: generically classified as a project, clean year, tech stack converted to tags
+    exp_project = p["experiences"][1]
+    assert "Projeto" in exp_project["company"]
+    assert exp_project["role"] == "ConsultorIA Dores — Agente de Crédito e Chat Conversacional"
+    assert exp_project["start_date"] == "2026"
+    assert exp_project["end_date"] == "2026"
+    assert len(exp_project["bullets_json"]) == 4
+    assert not any(
+        b["text"].lower().startswith("tecnologias:") for b in exp_project["bullets_json"]
+    )
+    all_project_tags = {tag for b in exp_project["bullets_json"] for tag in b["tags"]}
+    assert {"Python", "LangChain", "FAISS", "Pydantic"}.issubset(all_project_tags)
+
+
+def test_parse_markdown_resume_generic_project_detection():
+    sample_md = """# Maria Silva
+São Paulo - SP | maria@example.com
+
+## Experiência Profissional
+
+### Desenvolvedora Backend Pleno | Acme Payments (01/2023 - Atual)
+- **Arquitetura de Microsserviços:** desenvolvimento de APIs RESTful em Python com Docker
+e PostgreSQL.
+
+### Motor Antifraude — Pipeline de Detecção em Tempo Real (Hackathon FinTech 2024 — 2º Lugar)
+- Processamento de eventos de transação com baixa latência em AWS Lambda.
+- Stack: Python, AWS, DynamoDB, Docker.
+"""
+    parsed = parse_markdown_resume(sample_md)
+    assert len(parsed["experiences"]) == 2
+
+    role_exp = parsed["experiences"][0]
+    assert role_exp["company"] == "Acme Payments"
+    assert role_exp["role"] == "Desenvolvedora Backend Pleno"
+    assert role_exp["start_date"] == "01/2023"
+    assert role_exp["is_current"] is True
+    assert role_exp["bullets_json"][0]["text"].startswith("Arquitetura de Microsserviços:")
+
+    proj_exp = parsed["experiences"][1]
+    assert proj_exp["company"] == "Acme Payments · Projeto (Hackathon FinTech 2024 — 2º Lugar)"
+    assert proj_exp["role"] == "Motor Antifraude — Pipeline de Detecção em Tempo Real"
+    assert proj_exp["start_date"] == "2024"
+    assert proj_exp["end_date"] == "2024"
+    assert len(proj_exp["bullets_json"]) == 1
+    assert "DynamoDB" in proj_exp["bullets_json"][0]["tags"]
