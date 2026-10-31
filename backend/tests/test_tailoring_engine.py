@@ -3,9 +3,11 @@ import json
 import httpx
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
+from backend.app.db import get_db
 from backend.app.models import Experience, JobPosting, MasterProfile, TailoredArtifact, User
+from backend.app.routers.tailor import get_llm_orchestrator
 from backend.app.schemas.settings import SettingsUpdate
 from backend.app.services.llm_orchestrator import LLMOrchestrator
 from backend.app.services.resume_compiler import ResumeBlock, ResumeSection, ResumeSpec
@@ -14,9 +16,11 @@ from backend.app.services.tailoring_engine import (
     FactualGuardrailError,
     build_tailoring_system_prompt,
     extract_ats_keywords,
+    solve_screening_question,
     tailor_job_application,
     verify_factual_guardrails,
 )
+from backend.main import app
 
 
 @pytest.fixture
@@ -300,3 +304,147 @@ def test_build_tailoring_system_prompt_includes_strict_rules():
     assert "AI Automation Engineer" in prompt
     assert "python, llm, rag" in prompt
     assert "3-paragraph cover letter" in prompt
+
+
+def test_gupy_rundown_generated_and_persisted(
+    session: Session,
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    from fastapi.testclient import TestClient
+
+    user, profile, job = candidate_setup
+    user.email = "default@careerforge.local"
+    session.add(user)
+    session.commit()
+
+    def override_get_db():
+        yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(app) as client:
+            resp = client.get(f"/api/tailor/{job.id}/gupy-rundown")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "Davi Bernardes Machado" in data["short_bio"]
+            assert any("10,000+" in m for m in data["impact_metrics"])
+            assert any("10+" in m for m in data["impact_metrics"])
+            assert "Python" in data["prioritized_skill_tags"]
+            assert "FastAPI" in data["prioritized_skill_tags"]
+            assert "kubernetes" not in [t.lower() for t in data["prioritized_skill_tags"]]
+            assert data["selected_persona"] == "Backend Python Engineer"
+
+            artifact = session.exec(
+                select(TailoredArtifact).where(TailoredArtifact.job_id == job.id)
+            ).first()
+            assert artifact is not None
+            assert isinstance(artifact.gupy_rundown_json, dict)
+            assert artifact.gupy_rundown_json["short_bio"] == data["short_bio"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_solve_question_endpoint_returns_grounded_answer_and_blocks_hallucination(
+    session: Session,
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    from fastapi.testclient import TestClient
+
+    user, _, job = candidate_setup
+    user.email = "default@careerforge.local"
+    session.add(user)
+    session.commit()
+
+    update_settings(
+        session,
+        SettingsUpdate(active_provider="gemini", gemini_api_key="AIzaMockQAKey123"),
+    )
+
+    mock_answer_payload = {
+        "answer": (
+            "At Itaú Unibanco, I handled complex integration requirements by building "
+            "Python REST services syncing 10,000+ records/day into AWS S3 and automating "
+            "10+ manual workflows with AWS Step Functions and Lambda."
+        ),
+        "grounded_experiences": ["Itaú Unibanco"],
+    }
+
+    def mock_qa_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [{"content": {"parts": [{"text": json.dumps(mock_answer_payload)}]}}]
+            },
+        )
+
+    def override_get_db():
+        yield session
+
+    def override_get_llm():
+        return LLMOrchestrator(
+            session,
+            http_client=httpx.Client(transport=httpx.MockTransport(mock_qa_handler)),
+        )
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_llm_orchestrator] = override_get_llm
+    try:
+        with TestClient(app) as client:
+            resp = client.post(
+                f"/api/tailor/{job.id}/solve-question",
+                json={"question": "How do you handle ambiguous requirements and scale workflows?"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "10,000+" in data["answer"]
+            assert "Itaú Unibanco" in data["grounded_experiences"]
+            assert data["language"] == "en"
+
+            artifact = session.exec(
+                select(TailoredArtifact).where(TailoredArtifact.job_id == job.id)
+            ).first()
+            assert artifact is not None
+            assert isinstance(artifact.gupy_qa_json, list)
+            assert len(artifact.gupy_qa_json) == 1
+            assert artifact.gupy_qa_json[0]["answer"] == data["answer"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_solve_question_rejects_ungrounded_tech_hallucination(
+    session: Session,
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    _, profile, job = candidate_setup
+    update_settings(
+        session,
+        SettingsUpdate(active_provider="gemini", gemini_api_key="AIzaMockQAKey123"),
+    )
+
+    bad_payload = {
+        "answer": "I deployed Kubernetes clusters using Golang and Rust in production.",
+        "grounded_experiences": ["Itaú Unibanco"],
+    }
+
+    orchestrator = LLMOrchestrator(
+        session,
+        http_client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda req: httpx.Response(
+                    200,
+                    json={
+                        "candidates": [{"content": {"parts": [{"text": json.dumps(bad_payload)}]}}]
+                    },
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(FactualGuardrailError, match="golang"):
+        solve_screening_question(
+            session,
+            job,
+            profile,
+            question="Tell us about your infrastructure experience.",
+            orchestrator=orchestrator,
+        )

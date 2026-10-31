@@ -9,6 +9,7 @@ from backend.app.routers.compiler import router as compiler_router
 from backend.app.routers.profile import router as profile_router
 from backend.app.routers.scraper import router as scraper_router
 from backend.app.routers.settings import router as settings_router
+from backend.app.routers.tailor import router as tailor_router
 
 
 @asynccontextmanager
@@ -22,6 +23,7 @@ app.include_router(compiler_router, prefix="/api")
 app.include_router(profile_router, prefix="/api")
 app.include_router(scraper_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
+app.include_router(tailor_router, prefix="/api")
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 

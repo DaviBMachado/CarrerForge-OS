@@ -133,6 +133,25 @@ class TailoringResult(BaseModel):
     cover_letter_text: str
 
 
+class GupyRundown(BaseModel):
+    short_bio: str
+    impact_metrics: list[str] = Field(default_factory=list)
+    prioritized_skill_tags: list[str] = Field(default_factory=list)
+    language: TargetLanguage
+    selected_persona: str
+
+
+class SolveQuestionRequest(BaseModel):
+    question: str = Field(min_length=2)
+
+
+class SolveQuestionResponse(BaseModel):
+    question: str
+    answer: str
+    language: TargetLanguage
+    grounded_experiences: list[str] = Field(default_factory=list)
+
+
 def _tokenize_lower(text: str) -> set[str]:
     raw_tokens = re.findall(r"[a-z0-9à-ÿ+#./-]+", text.lower())
     return {tok.strip(".,;:!?/\\-") for tok in raw_tokens if tok.strip(".,;:!?/\\-")}
@@ -433,3 +452,226 @@ def tailor_job_application(
         resume_spec=resume_spec,
         cover_letter_text=cover_letter_text,
     )
+
+
+def _extract_impact_metrics(experiences: list[Experience]) -> list[str]:
+    metrics: list[str] = []
+    for exp in experiences:
+        for bullet in exp.bullets_json or []:
+            text = str(bullet.get("text") if isinstance(bullet, dict) else bullet or "").strip()
+            if text and re.search(r"\d", text):
+                entry = f"{text} ({exp.company})" if exp.company else text
+                if entry not in metrics:
+                    metrics.append(entry)
+    return metrics
+
+
+def _extract_prioritized_skills(
+    profile: MasterProfile,
+    experiences: list[Experience],
+    grounded_keywords: list[str],
+) -> list[str]:
+    all_skills: list[str] = []
+    if isinstance(profile.skills_json, dict):
+        for items in profile.skills_json.values():
+            if isinstance(items, list):
+                all_skills.extend(str(i).strip() for i in items if str(i).strip())
+            elif items:
+                all_skills.append(str(items).strip())
+    elif isinstance(profile.skills_json, list):
+        all_skills.extend(str(i).strip() for i in profile.skills_json if str(i).strip())
+
+    for exp in experiences:
+        for bullet in exp.bullets_json or []:
+            if isinstance(bullet, dict):
+                for tag in bullet.get("tags") or []:
+                    tag_str = str(tag).strip()
+                    if tag_str:
+                        all_skills.append(tag_str)
+
+    grounded_set = {k.lower() for k in grounded_keywords}
+    prioritized: list[str] = []
+    seen_lower: set[str] = set()
+
+    for skill in all_skills:
+        low = skill.lower()
+        if low in grounded_set and low not in seen_lower:
+            prioritized.append(skill)
+            seen_lower.add(low)
+
+    for kw in grounded_keywords:
+        if kw.lower() not in seen_lower:
+            prioritized.append(kw)
+            seen_lower.add(kw.lower())
+
+    for skill in all_skills:
+        low = skill.lower()
+        if low not in seen_lower:
+            prioritized.append(skill)
+            seen_lower.add(low)
+
+    return prioritized[:20]
+
+
+def generate_gupy_rundown(
+    session: Session,
+    job: JobPosting,
+    profile: MasterProfile,
+) -> GupyRundown:
+    """Build and persist Gupy / Form Assistant profile fields grounded in MasterProfile."""
+    assert job.id is not None, "JobPosting must be persisted before generating rundown."
+    experiences = list(
+        session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
+    )
+    job_text = job.cleaned_text or job.raw_description or ""
+    language = detect_language(job_text)
+    persona = select_persona(job_text, profile)
+    _, grounded_keywords, _ = extract_ats_keywords(job_text, profile, experiences)
+
+    artifact = session.exec(
+        select(TailoredArtifact).where(TailoredArtifact.job_id == job.id)
+    ).first()
+    if artifact is None:
+        artifact = TailoredArtifact(job_id=job.id)
+
+    if artifact.tailored_summary and artifact.tailored_summary.strip():
+        short_bio = artifact.tailored_summary.strip()
+    elif profile.summary_base and profile.summary_base.strip():
+        kw_suffix = f" ({', '.join(grounded_keywords[:6])})" if grounded_keywords else ""
+        short_bio = f"{profile.full_name} — {persona}. {profile.summary_base.strip()}{kw_suffix}"
+    else:
+        kw_str = ", ".join(grounded_keywords[:6]) or (profile.headline or persona)
+        if language == "pt-br":
+            short_bio = f"{profile.full_name} — {persona} com foco em {kw_str}."
+        else:
+            short_bio = f"{profile.full_name} — {persona} focused on {kw_str}."
+
+    metrics = _extract_impact_metrics(experiences)
+    skills = _extract_prioritized_skills(profile, experiences, grounded_keywords)
+
+    rundown = GupyRundown(
+        short_bio=short_bio,
+        impact_metrics=metrics,
+        prioritized_skill_tags=skills,
+        language=language,
+        selected_persona=artifact.selected_persona or persona,
+    )
+
+    artifact.gupy_rundown_json = rundown.model_dump()
+    if not artifact.selected_persona:
+        artifact.selected_persona = persona
+    session.add(artifact)
+    session.commit()
+    session.refresh(artifact)
+    return rundown
+
+
+def _verify_qa_guardrails(
+    answer_text: str,
+    profile: MasterProfile,
+    experiences: list[Experience],
+) -> None:
+    corpus, prof_tokens, _ = _collect_profile_grounding(profile, experiences)
+    ans_lower = answer_text.lower()
+    ans_tokens = _tokenize_lower(ans_lower)
+
+    fabricated_techs: list[str] = []
+    for tech in sorted(_KNOWN_TECH_VOCAB):
+        if _term_in_text(tech, ans_lower, ans_tokens):
+            if not _term_in_text(tech, corpus, prof_tokens):
+                fabricated_techs.append(tech)
+
+    if fabricated_techs:
+        joined = ", ".join(fabricated_techs)
+        raise FactualGuardrailError(
+            f"Guardrail violation: ungrounded technologies in Q&A answer: {joined}"
+        )
+
+
+def solve_screening_question(
+    session: Session,
+    job: JobPosting,
+    profile: MasterProfile,
+    question: str,
+    orchestrator: LLMOrchestrator | None = None,
+) -> SolveQuestionResponse:
+    """Draft a truthful screening answer strictly grounded in MasterProfile achievements."""
+    assert job.id is not None, "JobPosting must be persisted before solving questions."
+    clean_q = (question or "").strip()
+    if not clean_q:
+        raise ValueError("Question must not be empty.")
+
+    experiences = list(
+        session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
+    )
+    job_text = job.cleaned_text or job.raw_description or ""
+    # Match question language if strongly signaled, otherwise job language
+    q_lang = detect_language(clean_q)
+    j_lang = detect_language(job_text)
+    language: TargetLanguage = "pt-br" if (q_lang == "pt-br" or j_lang == "pt-br") else "en"
+    lang_label = "Portuguese (pt-BR)" if language == "pt-br" else "English (en)"
+    persona = select_persona(job_text, profile)
+
+    system_prompt = (
+        "You are an elite Career Interview & Screening Q&A Assistant.\n"
+        "STRICT FACTUAL INTEGRITY GUARDRAIL (NON-NEGOTIABLE):\n"
+        "1. Answer the screening question in first person ('I' / 'Eu') drawing STRICTLY "
+        "from the candidate's real experiences and metrics in MasterProfile.\n"
+        "2. NEVER invent companies, tools, technologies, certifications, or metrics "
+        "not explicitly present in MasterProfile.\n"
+        "3. Keep the answer concise (1 to 2 paragraphs, ready to paste into Gupy or ATS forms).\n"
+        f"4. Output language MUST be strictly {lang_label}.\n"
+        f"5. Adopt the focus lens: '{persona}'.\n"
+        "6. Respond strictly with a JSON object containing keys: "
+        "'answer' (string) and 'grounded_experiences' (list of company/project names cited)."
+    )
+
+    user_prompt = (
+        f"TARGET JOB: {job.title} at {job.company}\n"
+        f"SCREENING QUESTION: {clean_q}\n\n"
+        f"CANDIDATE MASTER PROFILE (SOLE SOURCE OF TRUTH):\n"
+        f"{_serialize_profile_for_prompt(profile, experiences)}"
+    )
+
+    llm = orchestrator or LLMOrchestrator(session, timeout=15.0)
+    payload = llm.generate_json(
+        prompt=user_prompt,
+        system_prompt=system_prompt,
+        temperature=0.2,
+    )
+
+    answer = str(payload.get("answer") or "").strip()
+    if not answer:
+        raise LLMProviderError("LLM returned an empty screening answer.")
+
+    _verify_qa_guardrails(answer, profile, experiences)
+
+    raw_grounded = payload.get("grounded_experiences")
+    if isinstance(raw_grounded, list) and raw_grounded:
+        grounded_exps = [str(item).strip() for item in raw_grounded if str(item).strip()]
+    else:
+        grounded_exps = [
+            exp.company
+            for exp in experiences
+            if exp.company and exp.company.lower() in answer.lower()
+        ]
+
+    response = SolveQuestionResponse(
+        question=clean_q,
+        answer=answer,
+        language=language,
+        grounded_experiences=grounded_exps,
+    )
+
+    artifact = session.exec(
+        select(TailoredArtifact).where(TailoredArtifact.job_id == job.id)
+    ).first()
+    if artifact is None:
+        artifact = TailoredArtifact(job_id=job.id, selected_persona=persona)
+
+    history = list(artifact.gupy_qa_json) if isinstance(artifact.gupy_qa_json, list) else []
+    history.append(response.model_dump())
+    artifact.gupy_qa_json = history
+    session.add(artifact)
+    session.commit()
+    return response
