@@ -4,11 +4,13 @@ import { JobRadar } from "./components/JobRadar";
 import { MasterProfileHub } from "./components/MasterProfileHub";
 import { ResumePreviewer } from "./components/ResumePreviewer";
 import { SettingsModal } from "./components/SettingsModal";
+import { TailoringStudio } from "./components/TailoringStudio";
 
-type ActiveTab = "radar" | "profile" | "compiler" | "status";
+type ActiveTab = "radar" | "studio" | "profile" | "compiler" | "status";
 
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("radar");
+  const [selectedJob, setSelectedJob] = useState<JobPostingItem | null>(null);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [settings, setSettings] = useState<SystemSettings | null>(null);
@@ -77,6 +79,14 @@ export function App() {
               aria-current={activeTab === "radar" ? "page" : undefined}
             >
               Job Radar
+            </button>
+            <button
+              type="button"
+              className={`nav-tab ${activeTab === "studio" ? "active" : ""}`}
+              onClick={() => setActiveTab("studio")}
+              aria-current={activeTab === "studio" ? "page" : undefined}
+            >
+              Tailoring Studio
             </button>
             <button
               type="button"
@@ -156,17 +166,26 @@ export function App() {
         </div>
       </header>
 
-      <main className="main-container">
+      <main
+        className={`main-container ${activeTab === "studio" ? "main-container-wide" : ""}`}
+      >
         {activeTab === "radar" ? (
           <JobRadar
             onNotify={notify}
             onTailorResume={(job: JobPostingItem) => {
-              setActiveTab("compiler");
+              setSelectedJob(job);
+              setActiveTab("studio");
               notify(
                 "success",
-                `Opened Resume Previewer for ${job.title} at ${job.company}`
+                `Opened Tailoring Studio for ${job.title} at ${job.company}`
               );
             }}
+          />
+        ) : activeTab === "studio" ? (
+          <TailoringStudio
+            selectedJob={selectedJob}
+            onSelectJob={setSelectedJob}
+            onNotify={notify}
           />
         ) : activeTab === "profile" ? (
           <MasterProfileHub onNotify={notify} />

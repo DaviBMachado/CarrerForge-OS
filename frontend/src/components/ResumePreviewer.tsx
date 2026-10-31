@@ -159,7 +159,7 @@ export function profileToText(profile: MasterProfile): string {
   return out.join("\n");
 }
 
-function base64ToPdfBlob(base64: string): Blob {
+export function base64ToPdfBlob(base64: string): Blob {
   const binary = window.atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {

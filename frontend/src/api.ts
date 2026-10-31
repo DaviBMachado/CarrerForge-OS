@@ -161,6 +161,48 @@ export interface ScraperStreamEvent {
   jobs_saved?: number;
 }
 
+export type TargetLanguage = "en" | "pt-br";
+
+export interface TailoringResult {
+  artifact_id: number;
+  job_id: number;
+  language: TargetLanguage;
+  selected_persona: string;
+  ats_keywords: string[];
+  match_percentage: number;
+  resume_spec: ResumeSpecPayload;
+  cover_letter_text: string;
+}
+
+export interface GupyRundown {
+  short_bio: string;
+  impact_metrics: string[];
+  prioritized_skill_tags: string[];
+  language: TargetLanguage;
+  selected_persona: string;
+}
+
+export interface SolveQuestionResponse {
+  question: string;
+  answer: string;
+  language: TargetLanguage;
+  grounded_experiences: string[];
+}
+
+export interface CoverLetterSpecPayload {
+  title?: string;
+  name?: string;
+  contact?: string | string[];
+  date?: string;
+  recipient?: string;
+  subject?: string;
+  greeting?: string;
+  paragraphs?: string[];
+  body?: string;
+  sign_off?: string;
+  filename_title?: string;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
@@ -267,4 +309,41 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  tailorJob: (jobId: number) =>
+    request<TailoringResult>(`/api/tailor/${jobId}`, {
+      method: "POST",
+    }),
+  getGupyRundown: (jobId: number) =>
+    request<GupyRundown>(`/api/tailor/${jobId}/gupy-rundown`),
+  solveQuestion: (jobId: number, question: string) =>
+    request<SolveQuestionResponse>(`/api/tailor/${jobId}/solve-question`, {
+      method: "POST",
+      body: JSON.stringify({ question }),
+    }),
+  exportCoverLetter: async (
+    spec: CoverLetterSpecPayload,
+    format: "pdf" | "docx"
+  ): Promise<{ blob: Blob; filename: string }> => {
+    const res = await fetch(`/api/compiler/cover-letter/export?format=${format}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...spec, format }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const errJson = (await res.json()) as { detail?: string };
+        if (errJson.detail) detail = errJson.detail;
+      } catch {
+        // ignore non-json error body
+      }
+      throw new Error(detail);
+    }
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    const filename =
+      match?.[1] || `${spec.filename_title || "Cover_Letter"}.${format}`;
+    const blob = await res.blob();
+    return { blob, filename };
+  },
 };
