@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 node_modules/
 dist/
+backend/app/static/
 .ruff_cache/
 .pytest_cache/
 GEMINI.md
