@@ -9,7 +9,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Mm, Pt, RGBColor
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from reportlab.lib.colors import HexColor
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
@@ -43,6 +43,65 @@ class ResumeSection(BaseModel):
     blocks: list[ResumeBlock] = Field(default_factory=list)
     bullets: list[str] = Field(default_factory=list)
 
+    @field_validator("blocks", mode="before")
+    @classmethod
+    def _normalize_blocks(cls, raw_blocks: Any) -> list[Any]:
+        if not isinstance(raw_blocks, list):
+            return []
+        result: list[Any] = []
+        for b in raw_blocks:
+            if isinstance(b, ResumeBlock):
+                result.append(b)
+                continue
+            if isinstance(b, str):
+                result.append({"type": "paragraph", "text": b})
+                continue
+            if not isinstance(b, dict):
+                continue
+            b_type = (b.get("type") or "paragraph").lower()
+            if b_type == "experience":
+                role = str(b.get("role") or "").strip()
+                company = str(b.get("company") or "").strip()
+                dates = str(b.get("dates") or b.get("date") or "").strip()
+                header_parts = [p for p in [role, company] if p]
+                header = " | ".join(header_parts)
+                if dates:
+                    header = f"{header} ({dates})" if header else dates
+                if header:
+                    result.append({"type": "subheading", "text": header})
+                for bullet in b.get("bullets") or []:
+                    result.append({"type": "bullet", "text": str(bullet).strip()})
+            elif b_type in ("skills_group", "skill_group"):
+                name = str(b.get("name") or b.get("category") or "").strip()
+                skills = b.get("skills") or []
+                skill_str = (
+                    ", ".join(str(s).strip() for s in skills)
+                    if isinstance(skills, list)
+                    else str(skills).strip()
+                )
+                text = f"**{name}:** {skill_str}" if name else skill_str
+                result.append({"type": "skillline", "text": text})
+            elif b_type in ("bullet_list", "bullets"):
+                items = b.get("items") or b.get("bullets") or []
+                for item in items:
+                    result.append({"type": "bullet", "text": str(item).strip()})
+            else:
+                text = str(
+                    b.get("text") or b.get("content") or b.get("body") or b.get("value") or ""
+                ).strip()
+                valid_types = {
+                    "title",
+                    "contact",
+                    "section",
+                    "subheading",
+                    "paragraph",
+                    "bullet",
+                    "skillline",
+                }
+                final_type = b_type if b_type in valid_types else "paragraph"
+                result.append({"type": final_type, "text": text})
+        return result
+
     def all_blocks(self) -> list[ResumeBlock]:
         combined = list(self.blocks)
         for bullet in self.bullets:
@@ -56,6 +115,24 @@ class ResumeSpec(BaseModel):
     contact: str | list[str] = ""
     filename_title: str = "Resume"
     sections: list[ResumeSection] = Field(default_factory=list)
+
+    @field_validator("contact", mode="before")
+    @classmethod
+    def _normalize_contact(cls, v: Any) -> Any:
+        if isinstance(v, dict):
+            parts = [str(val).strip() for val in v.values() if val and str(val).strip()]
+            return CONTACT_SEP.join(parts)
+        if isinstance(v, list):
+            clean_list: list[str] = []
+            for item in v:
+                if isinstance(item, dict):
+                    val = item.get("value") or item.get("text") or item.get("label") or ""
+                    if val:
+                        clean_list.append(str(val).strip())
+                elif item:
+                    clean_list.append(str(item).strip())
+            return CONTACT_SEP.join(clean_list)
+        return v
 
     def resolved_sections(self) -> list[ResumeSection]:
         has_header = any(s.title.lower() == "header" for s in self.sections)
@@ -87,6 +164,24 @@ class CoverLetterSpec(BaseModel):
     paragraphs: list[str] = Field(default_factory=list)
     body: str = ""
     sign_off: str = ""
+
+    @field_validator("contact", mode="before")
+    @classmethod
+    def _normalize_contact(cls, v: Any) -> Any:
+        if isinstance(v, dict):
+            parts = [str(val).strip() for val in v.values() if val and str(val).strip()]
+            return CONTACT_SEP.join(parts)
+        if isinstance(v, list):
+            clean_list: list[str] = []
+            for item in v:
+                if isinstance(item, dict):
+                    val = item.get("value") or item.get("text") or item.get("label") or ""
+                    if val:
+                        clean_list.append(str(val).strip())
+                elif item:
+                    clean_list.append(str(item).strip())
+            return CONTACT_SEP.join(clean_list)
+        return v
 
 
 def _resolve_font_dir() -> Path:

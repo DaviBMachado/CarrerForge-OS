@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -286,7 +287,7 @@ class LLMOrchestrator:
     """Unified multi-provider LLM client reading active credentials from SystemSetting."""
 
     DEFAULT_MODELS: dict[LLMProvider, str] = {
-        "gemini": "gemini-2.5-flash",
+        "gemini": "gemini-3.6-flash",
         "openai": "gpt-4o-mini",
         "claude": "claude-3-5-sonnet-latest",
         "ollama": "llama3.1",
@@ -296,7 +297,7 @@ class LLMOrchestrator:
         self,
         session: Session,
         http_client: httpx.Client | None = None,
-        timeout: float = 45.0,
+        timeout: float = 90.0,
     ) -> None:
         self.session = session
         self._http_client = http_client
@@ -435,8 +436,11 @@ class LLMOrchestrator:
         json_mode: bool,
         temperature: float,
     ) -> str:
-        model = self.DEFAULT_MODELS["gemini"]
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        primary_model = self.DEFAULT_MODELS["gemini"]
+        candidate_models = [primary_model]
+        if primary_model != "gemini-3.5-flash":
+            candidate_models.append("gemini-3.5-flash")
+
         generation_config: dict[str, Any] = {"temperature": temperature}
         if json_mode:
             generation_config["responseMimeType"] = "application/json"
@@ -448,16 +452,27 @@ class LLMOrchestrator:
         if system_prompt:
             payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
 
-        resp = client.post(url, headers={"x-goog-api-key": api_key}, json=payload)
-        if resp.status_code >= 400:
-            raise LLMProviderError(
-                f"Gemini API error ({resp.status_code}): {_redact_secret(resp.text, api_key)}"
-            )
-        data = resp.json()
-        try:
-            return str(data["candidates"][0]["content"]["parts"][0]["text"])
-        except (KeyError, IndexError, TypeError) as exc:
-            raise LLMProviderError("Unexpected Gemini response schema.") from exc
+        last_resp: httpx.Response | None = None
+        for model in candidate_models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            for attempt in range(2):
+                resp = client.post(url, headers={"x-goog-api-key": api_key}, json=payload)
+                last_resp = resp
+                if resp.status_code == 200:
+                    data = resp.json()
+                    try:
+                        return str(data["candidates"][0]["content"]["parts"][0]["text"])
+                    except (KeyError, IndexError, TypeError) as exc:
+                        raise LLMProviderError("Unexpected Gemini response schema.") from exc
+                if resp.status_code in (503, 429) and attempt == 0:
+                    time.sleep(1.0)
+                    continue
+                break
+
+        if last_resp is not None:
+            err_msg = _redact_secret(last_resp.text, api_key)
+            raise LLMProviderError(f"Gemini API error ({last_resp.status_code}): {err_msg}")
+        raise LLMProviderError("Gemini API call failed with no response.")
 
     def _call_openai(
         self,

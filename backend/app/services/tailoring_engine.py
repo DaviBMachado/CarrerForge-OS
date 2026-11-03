@@ -320,8 +320,10 @@ def build_tailoring_system_prompt(
         "(separated by blank lines '\\n\\n') tailored to the target company and role.\n"
         "8. Respond strictly with a JSON object containing keys 'resume_spec' "
         "(conforming to ResumeSpec schema: name, title, contact, filename_title, "
-        "sections[{title, blocks[{type, text}], bullets[]}]) and "
-        "'cover_letter' (string with 3 paragraphs)."
+        "sections[{title, blocks[{type, text}]}]) and "
+        "'cover_letter' (string with 3 paragraphs separated by '\\n\\n').\n"
+        "   Allowed block types: 'paragraph' (summary), 'subheading' (Role | Company (Dates)), "
+        "'bullet' (impact achievement), 'skillline' (**Category:** skills)."
     )
 
 
@@ -367,10 +369,38 @@ def _normalize_cover_letter(raw_letter: Any) -> str:
         raise LLMProviderError("Generated cover letter is empty.")
 
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
-    if len(paragraphs) != 3:
-        raise LLMProviderError(
-            f"Cover letter must contain exactly 3 paragraphs, got {len(paragraphs)}."
-        )
+    if not paragraphs:
+        raise LLMProviderError("Generated cover letter is empty.")
+
+    while len(paragraphs) > 3:
+        # Merge the two shortest adjacent paragraphs to maintain exactly 3
+        min_idx = 0
+        min_len = float("inf")
+        for i in range(len(paragraphs) - 1):
+            combined_len = len(paragraphs[i]) + len(paragraphs[i + 1])
+            if combined_len < min_len:
+                min_len = combined_len
+                min_idx = i
+        paragraphs[min_idx] = f"{paragraphs[min_idx]} {paragraphs[min_idx + 1]}"
+        paragraphs.pop(min_idx + 1)
+
+    while len(paragraphs) < 3:
+        # Split the longest paragraph on sentence boundary to maintain exactly 3
+        longest_idx = max(range(len(paragraphs)), key=lambda idx: len(paragraphs[idx]))
+        sentences = re.split(r"(?<=[.!?])\s+", paragraphs[longest_idx])
+        if len(sentences) >= 2:
+            mid = max(1, len(sentences) // 2)
+            p1 = " ".join(sentences[:mid]).strip()
+            p2 = " ".join(sentences[mid:]).strip()
+            paragraphs[longest_idx] = p1
+            paragraphs.insert(longest_idx + 1, p2)
+        else:
+            mid = max(1, len(paragraphs[longest_idx]) // 2)
+            p1 = paragraphs[longest_idx][:mid].strip()
+            p2 = paragraphs[longest_idx][mid:].strip()
+            paragraphs[longest_idx] = p1
+            paragraphs.insert(longest_idx + 1, p2)
+
     return "\n\n".join(paragraphs)
 
 
