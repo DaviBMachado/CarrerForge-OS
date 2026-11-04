@@ -1,15 +1,29 @@
+import re
 from datetime import UTC, datetime
 from typing import Any
-
+from sqlalchemy.orm import validates
 from sqlmodel import JSON, Field, Relationship, SQLModel
+
+_EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+$")
 
 
 class User(SQLModel, table=True):
     __tablename__: Any = "users"
 
     id: int | None = Field(default=None, primary_key=True)
-    email: str = Field(index=True, unique=True)
+    email: str | None = Field(default=None, index=True, unique=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @validates("email")
+    def validate_email_address(self, key: str, value: Any) -> str | None:
+        if value is None or value == "":
+            return None
+        clean = str(value).strip()
+        if not clean:
+            return None
+        if not _EMAIL_REGEX.match(clean):
+            raise ValueError(f"Invalid email address: {value}")
+        return clean
 
     master_profiles: list["MasterProfile"] = Relationship(
         back_populates="user",

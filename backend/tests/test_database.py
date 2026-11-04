@@ -49,6 +49,33 @@ def test_table_creation(session: Session):
     assert expected_tables.issubset(set(tables))
 
 
+def test_user_email_validation(session: Session):
+    # Optional / None email
+    user_none = User(email=None)
+    session.add(user_none)
+    session.commit()
+    assert user_none.id is not None
+    assert user_none.email is None
+
+    # Valid local domain email
+    user_local = User(email="default@careerforge.local")
+    session.add(user_local)
+    session.commit()
+    assert user_local.email == "default@careerforge.local"
+
+    # Invalid email formats must raise ValueError
+    import pytest
+
+    with pytest.raises(ValueError, match="Invalid email address"):
+        User(email="not-an-email")
+
+    with pytest.raises(ValueError, match="Invalid email address"):
+        User(email="@domain.com")
+
+    with pytest.raises(ValueError, match="Invalid email address"):
+        User(email="user@domain")
+
+
 def test_user_and_profile_cascade(session: Session):
     user = User(email="test_user@example.com")
     session.add(user)
