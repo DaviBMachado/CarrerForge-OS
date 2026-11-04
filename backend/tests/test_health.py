@@ -28,7 +28,8 @@ def test_static_and_spa_fallback(monkeypatch, tmp_path):
     static_dir = tmp_path / "static"
     static_dir.mkdir()
     index_html = static_dir / "index.html"
-    index_html.write_text("<!DOCTYPE html><html><body>CareerForge SPA</body></html>", encoding="utf-8")
+    html_content = "<!DOCTYPE html><html><body>CareerForge SPA</body></html>"
+    index_html.write_text(html_content, encoding="utf-8")
 
     asset_dir = static_dir / "assets"
     asset_dir.mkdir()
