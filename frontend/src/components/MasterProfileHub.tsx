@@ -7,6 +7,7 @@ import {
   MasterProfile,
   SkillsMatrix,
 } from "../api";
+import { useAppStore } from "../store";
 
 interface MasterProfileHubProps {
   onNotify: (type: "success" | "error", message: string) => void;
@@ -38,8 +39,11 @@ function formatTagDisplay(tag: string): string {
 }
 
 export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
+  const fetchProfile = useAppStore((s) => s.fetchProfile);
+  const setProfileStore = useAppStore((s) => s.setProfile);
+
   const [profile, setProfile] = useState<MasterProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!useAppStore.getState().profileLoaded);
   const [savingProfile, setSavingProfile] = useState(false);
   const [importing, setImporting] = useState(false);
 
@@ -80,6 +84,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
 
   const hydrateFromProfile = (data: MasterProfile) => {
     setProfile(data);
+    setProfileStore(data);
     setFullName(data.full_name || "");
     setHeadline(data.headline || "");
     setSummaryBase(data.summary_base || "");
@@ -107,10 +112,9 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
   };
 
   useEffect(() => {
-    api
-      .getProfile()
+    fetchProfile()
       .then((data) => {
-        hydrateFromProfile(data);
+        if (data) hydrateFromProfile(data);
         setLoading(false);
       })
       .catch((err: Error) => {

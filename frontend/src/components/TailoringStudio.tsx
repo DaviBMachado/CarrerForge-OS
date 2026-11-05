@@ -11,6 +11,7 @@ import {
   SolveQuestionResponse,
 } from "../api";
 import { base64ToPdfBlob } from "./ResumePreviewer";
+import { useAppStore } from "../store";
 
 interface TailoringStudioProps {
   selectedJob: JobPostingItem | null;
@@ -120,7 +121,7 @@ function profileToInitialSpec(
   if (profile.skills_json && Object.keys(profile.skills_json).length > 0) {
     const skillParts = Object.entries(profile.skills_json)
       .filter(([, items]) => Array.isArray(items) && items.length > 0)
-      .map(([cat, items]) => `**${cat}:** ${items.join(", ")}`);
+      .map(([cat, items]) => `**${cat}:** ${(items as string[]).join(", ")}`);
     if (skillParts.length > 0) {
       sections.push({
         title: "Technical Skills",
@@ -194,8 +195,10 @@ export function TailoringStudio({
   onSelectJob,
   onNotify,
 }: TailoringStudioProps) {
-  const [jobs, setJobs] = useState<JobPostingItem[]>([]);
-  const [profile, setProfile] = useState<MasterProfile | null>(null);
+  const jobs = useAppStore((s) => s.jobs);
+  const profile = useAppStore((s) => s.profile);
+  const fetchJobs = useAppStore((s) => s.fetchJobs);
+  const fetchProfile = useAppStore((s) => s.fetchProfile);
   const [activeTab, setActiveTab] = useState<StudioTab>("resume");
 
   const [persona, setPersona] = useState<string>("Backend Python Engineer");
@@ -229,17 +232,19 @@ export function TailoringStudio({
   // Load jobs and profile on mount
   useEffect(() => {
     Promise.all([
-      api.getScrapedJobs().catch(() => [] as JobPostingItem[]),
-      api.getProfile().catch(() => null),
+      fetchJobs().catch(() => [] as JobPostingItem[]),
+      fetchProfile().catch(() => null),
     ]).then(([loadedJobs, loadedProfile]) => {
-      setJobs(loadedJobs);
-      setProfile(loadedProfile);
       const initialJob = selectedJob || loadedJobs[0] || null;
       if (initialJob && !selectedJob) {
         onSelectJob(initialJob);
       }
       if (loadedProfile) {
-        setResumeSpec(profileToInitialSpec(loadedProfile, initialJob));
+        setResumeSpec((prev) =>
+          prev.name
+            ? prev
+            : profileToInitialSpec(loadedProfile, initialJob)
+        );
       }
     });
   }, []);

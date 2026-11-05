@@ -5,15 +5,20 @@ import { MasterProfileHub } from "./components/MasterProfileHub";
 import { ResumePreviewer } from "./components/ResumePreviewer";
 import { SettingsModal } from "./components/SettingsModal";
 import { TailoringStudio } from "./components/TailoringStudio";
+import { useAppStore } from "./store";
 
 type ActiveTab = "radar" | "studio" | "profile" | "compiler" | "status";
 
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("radar");
-  const [selectedJob, setSelectedJob] = useState<JobPostingItem | null>(null);
+  const selectedJob = useAppStore((s) => s.selectedJob);
+  const setSelectedJob = useAppStore((s) => s.setSelectedJob);
+  const settings = useAppStore((s) => s.settings);
+  const setSettings = useAppStore((s) => s.setSettings);
+  const fetchSettings = useAppStore((s) => s.fetchSettings);
+
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
-  const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<{
     type: "success" | "error";
@@ -33,13 +38,8 @@ export function App() {
       .then((data) => setHealth(data))
       .catch((err: Error) => setHealthError(err.message));
 
-    api
-      .getSettings()
-      .then((data) => setSettings(data))
-      .catch(() => {
-        // fallback if settings endpoint not yet populated
-      });
-  }, []);
+    void fetchSettings();
+  }, [fetchSettings]);
 
   const isProviderConfigured = (s: SystemSettings | null): boolean => {
     if (!s) return false;
@@ -74,6 +74,8 @@ export function App() {
           <nav className="nav-tabs" aria-label="Main navigation">
             <button
               type="button"
+              id="tab-radar"
+              aria-controls="tabpanel-radar"
               className={`nav-tab ${activeTab === "radar" ? "active" : ""}`}
               onClick={() => setActiveTab("radar")}
               aria-current={activeTab === "radar" ? "page" : undefined}
@@ -82,6 +84,8 @@ export function App() {
             </button>
             <button
               type="button"
+              id="tab-studio"
+              aria-controls="tabpanel-studio"
               className={`nav-tab ${activeTab === "studio" ? "active" : ""}`}
               onClick={() => setActiveTab("studio")}
               aria-current={activeTab === "studio" ? "page" : undefined}
@@ -90,6 +94,8 @@ export function App() {
             </button>
             <button
               type="button"
+              id="tab-profile"
+              aria-controls="tabpanel-profile"
               className={`nav-tab ${activeTab === "profile" ? "active" : ""}`}
               onClick={() => setActiveTab("profile")}
               aria-current={activeTab === "profile" ? "page" : undefined}
@@ -98,6 +104,8 @@ export function App() {
             </button>
             <button
               type="button"
+              id="tab-compiler"
+              aria-controls="tabpanel-compiler"
               className={`nav-tab ${activeTab === "compiler" ? "active" : ""}`}
               onClick={() => setActiveTab("compiler")}
               aria-current={activeTab === "compiler" ? "page" : undefined}
@@ -106,6 +114,8 @@ export function App() {
             </button>
             <button
               type="button"
+              id="tab-status"
+              aria-controls="tabpanel-status"
               className={`nav-tab ${activeTab === "status" ? "active" : ""}`}
               onClick={() => setActiveTab("status")}
               aria-current={activeTab === "status" ? "page" : undefined}
@@ -169,7 +179,16 @@ export function App() {
       <main
         className={`main-container ${activeTab === "studio" ? "main-container-wide" : ""}`}
       >
-        {activeTab === "radar" ? (
+        <div
+          role="tabpanel"
+          id="tabpanel-radar"
+          aria-labelledby="tab-radar"
+          hidden={activeTab !== "radar"}
+          style={{
+            display: activeTab === "radar" ? "block" : "none",
+            width: "100%",
+          }}
+        >
           <JobRadar
             onNotify={notify}
             onTailorResume={(job: JobPostingItem) => {
@@ -181,17 +200,61 @@ export function App() {
               );
             }}
           />
-        ) : activeTab === "studio" ? (
+        </div>
+
+        <div
+          role="tabpanel"
+          id="tabpanel-studio"
+          aria-labelledby="tab-studio"
+          hidden={activeTab !== "studio"}
+          style={{
+            display: activeTab === "studio" ? "block" : "none",
+            width: "100%",
+          }}
+        >
           <TailoringStudio
             selectedJob={selectedJob}
             onSelectJob={setSelectedJob}
             onNotify={notify}
           />
-        ) : activeTab === "profile" ? (
+        </div>
+
+        <div
+          role="tabpanel"
+          id="tabpanel-profile"
+          aria-labelledby="tab-profile"
+          hidden={activeTab !== "profile"}
+          style={{
+            display: activeTab === "profile" ? "block" : "none",
+            width: "100%",
+          }}
+        >
           <MasterProfileHub onNotify={notify} />
-        ) : activeTab === "compiler" ? (
+        </div>
+
+        <div
+          role="tabpanel"
+          id="tabpanel-compiler"
+          aria-labelledby="tab-compiler"
+          hidden={activeTab !== "compiler"}
+          style={{
+            display: activeTab === "compiler" ? "block" : "none",
+            width: "100%",
+          }}
+        >
           <ResumePreviewer onNotify={notify} />
-        ) : (
+        </div>
+
+        <div
+          role="tabpanel"
+          id="tabpanel-status"
+          aria-labelledby="tab-status"
+          hidden={activeTab !== "status"}
+          style={{
+            display: activeTab === "status" ? "block" : "none",
+            width: "100%",
+          }}
+        >
           <section className="panel" aria-labelledby="runtime-status-heading">
             <div className="panel-header">
               <h1 id="runtime-status-heading" className="panel-title">
@@ -240,7 +303,7 @@ export function App() {
               </p>
             )}
           </section>
-        )}
+        </div>
       </main>
 
       <SettingsModal

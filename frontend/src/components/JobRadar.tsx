@@ -5,6 +5,7 @@ import {
   ScraperSessionStatus,
   ScraperStreamEvent,
 } from "../api";
+import { useAppStore } from "../store";
 
 interface JobRadarProps {
   onNotify: (type: "success" | "error", message: string) => void;
@@ -29,23 +30,27 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     useState<ScraperSessionStatus | null>(null);
   const [launchingLogin, setLaunchingLogin] = useState(false);
 
-  const [jobs, setJobs] = useState<JobPostingItem[]>([]);
-  const [loadingJobs, setLoadingJobs] = useState(true);
+  const jobs = useAppStore((s) => s.jobs);
+  const setJobs = useAppStore((s) => s.setJobs);
+  const fetchJobs = useAppStore((s) => s.fetchJobs);
+  const logs = useAppStore((s) => s.radarLogs);
+  const addRadarLog = useAppStore((s) => s.addRadarLog);
+  const clearRadarLogs = useAppStore((s) => s.clearRadarLogs);
+
+  const [loadingJobs, setLoadingJobs] = useState(!useAppStore.getState().jobsLoaded);
   const [showArchived, setShowArchived] = useState(false);
 
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [logs, setLogs] = useState<ScraperStreamEvent[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(true);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const refreshJobs = async () => {
+  const refreshJobs = async (force = false) => {
     try {
-      const data = await api.getScrapedJobs();
-      setJobs(data);
+      await fetchJobs(force);
     } catch (err) {
       onNotify(
         "error",
@@ -66,7 +71,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
   };
 
   useEffect(() => {
-    void refreshJobs();
+    void refreshJobs(false);
     void refreshSessionStatus();
     return () => {
       eventSourceRef.current?.close();
@@ -117,7 +122,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as ScraperStreamEvent;
-        setLogs((prev) => [...prev, data]);
+        addRadarLog(data);
         if (typeof data.progress === "number") {
           setProgress(data.progress);
         }
@@ -128,7 +133,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
         ) {
           setRunning(false);
           es.close();
-          void refreshJobs();
+          void refreshJobs(true);
           if (data.status === "completed") {
             onNotify(
               "success",
@@ -146,7 +151,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     es.onerror = () => {
       setRunning(false);
       es.close();
-      void refreshJobs();
+      void refreshJobs(true);
     };
   };
 
@@ -159,7 +164,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     setRunning(true);
     setDrawerOpen(true);
     setProgress(0);
-    setLogs([]);
+    clearRadarLogs();
 
     try {
       const { run_id } = await api.startScraper({
@@ -185,7 +190,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
       eventSourceRef.current?.close();
       setRunning(false);
       onNotify("success", "Scraper stopped.");
-      void refreshJobs();
+      void refreshJobs(true);
     } catch (err) {
       onNotify(
         "error",
@@ -376,7 +381,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
             <button
               type="button"
               className="btn btn-sm"
-              onClick={() => void refreshJobs()}
+              onClick={() => void refreshJobs(true)}
             >
               Refresh
             </button>
@@ -499,7 +504,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
               <button
                 type="button"
                 className="btn btn-sm"
-                onClick={() => setLogs([])}
+                onClick={clearRadarLogs}
               >
                 Clear
               </button>
