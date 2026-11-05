@@ -350,9 +350,13 @@ def import_legacy_data(
     profile: MasterProfile,
     resume_path: Path | None = None,
 ) -> dict[str, Any]:
-    project_root = Path(__file__).resolve().parent.parent.parent.parent
     if resume_path is None:
-        resume_path = project_root / "general-resumes" / "Davi_Bernardes_Machado_Curriculo_ATS.md"
+        resume_path = (
+            Path(__file__).resolve().parent.parent.parent
+            / "tests"
+            / "fixtures"
+            / "sample_resume.md"
+        )
 
     if not resume_path.is_file():
         raise FileNotFoundError(f"Resume file not found at {resume_path}")

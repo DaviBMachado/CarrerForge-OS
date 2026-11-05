@@ -16,8 +16,7 @@ from backend.app.services.resume_compiler import (
 )
 from backend.main import app
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SAMPLE_SPEC_PATH = REPO_ROOT / "_tools" / "specs" / "akross_backend_estagiario.json"
+SAMPLE_SPEC_PATH = Path(__file__).resolve().parent / "fixtures" / "sample_spec.json"
 
 
 def test_compile_sample_spec_to_docx_and_pdf():

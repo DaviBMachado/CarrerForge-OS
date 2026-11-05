@@ -1,0 +1,67 @@
+{
+  "name": "Davi Bernardes Machado",
+  "filename_title": "Curriculo_Davi_Bernardes_Machado_Akross",
+  "sections": [
+    {
+      "title": "Header",
+      "blocks": [
+        { "type": "title", "text": "Davi Bernardes Machado" },
+        { "type": "contact", "text": "São Paulo - SP, Vila Medeiros | (11) 97782-0882 | davibernardes021@gmail.com" },
+        { "type": "contact", "text": "https://linkedin.com/in/davibmachado | https://github.com/DaviBMachado" }
+      ]
+    },
+    {
+      "title": "Resumo Profissional",
+      "blocks": [
+        { "type": "paragraph", "text": "Estudante de Desenvolvimento de Software Multiplataforma (FATEC) e desenvolvedor backend com experiência em APIs REST, microsserviços e nuvem AWS, com formação em Java (Instituto PROA — Full Stack Java). Desenvolvi APIs RESTful com autenticação JWT e arquitetura multi-tenant, automações em larga escala (10.000+ registros/dia) e integrações entre sistemas no Itaú Unibanco. Uso assistentes de IA (Claude Code, GitHub Copilot, Cursor) diariamente no desenvolvimento, com revisão crítica do código gerado, engenharia de prompt e agentes automatizados. Inglês avançado." }
+      ]
+    },
+    {
+      "title": "Habilidades Técnicas",
+      "blocks": [
+        { "type": "skillline", "text": "**Backend:** Java (Instituto PROA — Full Stack Java), Spring Boot (noções), Python 3, APIs REST, microsserviços, arquitetura serverless" },
+        { "type": "skillline", "text": "**Banco de dados:** PostgreSQL, MySQL, DynamoDB, SQL (consultas de alto volume com AWS Athena)" },
+        { "type": "skillline", "text": "**Testes & Qualidade:** testes unitários e de integração (pytest), orientação a objeto, Design Patterns, Clean Code, code review" },
+        { "type": "skillline", "text": "**Nuvem & Infra:** AWS (Lambda, S3, Step Functions, EC2, IAM), Docker, Terraform, CI/CD, observabilidade (CloudWatch, Datadog)" },
+        { "type": "skillline", "text": "**Mensageria & Integrações:** SQS, integrações REST entre sistemas (ServiceNow ↔ S3), JWT, Swagger/OpenAPI" },
+        { "type": "skillline", "text": "**IA aplicada ao desenvolvimento:** Claude Code, GitHub Copilot, Cursor, engenharia de prompt, agentes e fluxos automatizados de dev, validação crítica de código gerado" }
+      ]
+    },
+    {
+      "title": "Experiência Profissional",
+      "blocks": [
+        { "type": "subheading", "text": "Estagiário em Engenharia de Software Backend | Itaú Unibanco (02/2024 - 06/2025)" },
+        { "type": "bullet", "text": "Desenvolvi e mantive APIs REST e integrações entre sistemas em Python, sincronizando mais de 10.000 registros/dia entre ServiceNow e AWS S3." },
+        { "type": "bullet", "text": "Automatizei mais de 10 processos manuais com AWS Step Functions e Lambdas, migrando aplicação monolítica para arquitetura serverless e microsserviços." },
+        { "type": "bullet", "text": "Escrevi testes unitários e de integração (pytest), participei de code reviews e investiguei incidentes com análise de logs (CloudWatch, Datadog)." },
+        { "type": "bullet", "text": "Participei das cerimônias ágeis (Scrum) colaborando com analistas, Product Owners e líder técnico." }
+      ]
+    },
+    {
+      "title": "Projetos em Destaque",
+      "blocks": [
+        { "type": "subheading", "text": "Define Pilates (2025) — API RESTful em Python/Django/DRF (publicado no GitHub)" },
+        { "type": "bullet", "text": "API REST completa com arquitetura multi-tenant em PostgreSQL, autenticação JWT e documentação Swagger/OpenAPI, modelada do zero com UML." },
+        { "type": "subheading", "text": "Outros Projetos (publicados no GitHub)" },
+        { "type": "bullet", "text": "Lunna Plataforma Educacional: React.js e Java. | IBDN Plataforma Empresarial: FastAPI, React.js, MySQL." },
+        { "type": "bullet", "text": "ConsultorIA Dores (Talentos em Ação Itaú 2026 — 1º lugar): solução de IA generativa com Python, LLM e RAG." }
+      ]
+    },
+    {
+      "title": "Formação Acadêmica & Cursos",
+      "blocks": [
+        { "type": "subheading", "text": "FATEC Zona Leste — Curso Superior de Tecnologia em Desenvolvimento de Software Multiplataforma (Conclusão: 06/2026)" },
+        { "type": "bullet", "text": "Foco em arquitetura web, microsserviços, modelagem de banco de dados e engenharia de software." },
+        { "type": "subheading", "text": "Instituto PROA — Formação Profissionalizante em Desenvolvimento Full Stack Java (2023)" },
+        { "type": "bullet", "text": "Programação orientada a objetos com Java, banco de dados relacional e desenvolvimento web." }
+      ]
+    },
+    {
+      "title": "Idiomas",
+      "blocks": [
+        { "type": "skillline", "text": "**Inglês:** Avançado" },
+        { "type": "skillline", "text": "**Português:** Nativo" }
+      ]
+    }
+  ]
+}
