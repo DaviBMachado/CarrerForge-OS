@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 node_modules/
 dist/
+backend/app/static/
 .ruff_cache/
 .pytest_cache/
 GEMINI.md
@@ -11,3 +12,12 @@ GEMINI.md
 _tools/specs/
 companies/
 general-resumes/
+*.db
+*.db-shm
+*.db-wal
+backend/data/*.db
+backend/data/.browser_session/
+*.egg-info/
+build/
+dist/
+

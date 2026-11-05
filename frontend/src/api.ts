@@ -1,0 +1,349 @@
+export type LLMProvider = "gemini" | "openai" | "claude" | "ollama";
+
+export interface BulletItem {
+  text: string;
+  tags: string[];
+}
+
+export interface ExperienceItem {
+  id: number;
+  profile_id: number;
+  company: string;
+  role: string;
+  location: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  is_current: boolean;
+  bullets_json: BulletItem[];
+}
+
+export interface ExperiencePayload {
+  company: string;
+  role: string;
+  location?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  is_current?: boolean;
+  bullets_json?: BulletItem[];
+}
+
+export interface ContactInfo {
+  email?: string;
+  phone?: string;
+  location?: string;
+  linkedin?: string;
+  github?: string;
+  [key: string]: string | undefined;
+}
+
+export type SkillsMatrix = Record<string, string[]>;
+
+export interface MasterProfile {
+  id: number;
+  user_id: number;
+  full_name: string;
+  headline: string | null;
+  contact_json: ContactInfo | null;
+  summary_base: string | null;
+  skills_json: SkillsMatrix | null;
+  languages_json: string[] | null;
+  experiences: ExperienceItem[];
+}
+
+export interface ProfileUpdatePayload {
+  full_name?: string;
+  headline?: string | null;
+  contact_json?: ContactInfo | null;
+  summary_base?: string | null;
+  skills_json?: SkillsMatrix | null;
+  languages_json?: string[] | null;
+}
+
+export interface LegacyImportResult {
+  status: string;
+  profile_id: number;
+  experiences_count: number;
+  specs_scanned: number;
+  total_bullets: number;
+}
+
+export interface SystemSettings {
+  active_provider: LLMProvider;
+  gemini_api_key: string | null;
+  openai_api_key: string | null;
+  anthropic_api_key: string | null;
+  ollama_base_url: string;
+  scraper_headless: boolean;
+  scraper_timeout: number;
+}
+
+export type SettingsUpdatePayload = Partial<SystemSettings>;
+
+export interface HealthStatus {
+  status: string;
+  app: string;
+  version: string;
+}
+
+export type ResumeBlockType =
+  | "title"
+  | "contact"
+  | "section"
+  | "subheading"
+  | "paragraph"
+  | "bullet"
+  | "skillline";
+
+export interface ResumeBlock {
+  type: ResumeBlockType;
+  text: string;
+}
+
+export interface ResumeSection {
+  title: string;
+  blocks?: ResumeBlock[];
+  bullets?: string[];
+}
+
+export interface ResumeSpecPayload {
+  name?: string;
+  title?: string;
+  contact?: string | string[];
+  filename_title?: string;
+  sections: ResumeSection[];
+}
+
+export interface PreviewResponse {
+  page_count: number;
+  is_valid_2_page: boolean;
+  pdf_base64: string;
+}
+
+export interface JobPostingItem {
+  id: number;
+  user_id: number;
+  platform: string;
+  external_id: string | null;
+  title: string;
+  company: string;
+  location: string | null;
+  remote_type: string | null;
+  url: string | null;
+  raw_description: string;
+  cleaned_text: string | null;
+  language: string;
+  status: string;
+  created_at: string;
+}
+
+export interface ScraperSessionStatus {
+  authenticated: boolean;
+  linkedin: boolean;
+  gupy: boolean;
+  session_dir: string;
+  status?: string;
+}
+
+export interface ScraperStartPayload {
+  query: string;
+  location: string;
+  platforms: string[];
+  remote?: boolean;
+  max_jobs?: number;
+}
+
+export interface ScraperStreamEvent {
+  run_id: string;
+  message: string;
+  progress: number;
+  status: string;
+  jobs_scraped?: number;
+  jobs_saved?: number;
+}
+
+export type TargetLanguage = "en" | "pt-br";
+
+export interface TailoringResult {
+  artifact_id: number;
+  job_id: number;
+  language: TargetLanguage;
+  selected_persona: string;
+  ats_keywords: string[];
+  match_percentage: number;
+  resume_spec: ResumeSpecPayload;
+  cover_letter_text: string;
+}
+
+export interface GupyRundown {
+  short_bio: string;
+  impact_metrics: string[];
+  prioritized_skill_tags: string[];
+  language: TargetLanguage;
+  selected_persona: string;
+}
+
+export interface SolveQuestionResponse {
+  question: string;
+  answer: string;
+  language: TargetLanguage;
+  grounded_experiences: string[];
+}
+
+export interface CoverLetterSpecPayload {
+  title?: string;
+  name?: string;
+  contact?: string | string[];
+  date?: string;
+  recipient?: string;
+  subject?: string;
+  greeting?: string;
+  paragraphs?: string[];
+  body?: string;
+  sign_off?: string;
+  filename_title?: string;
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    ...init,
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const errJson = (await res.json()) as { detail?: string };
+      if (errJson.detail) detail = errJson.detail;
+    } catch {
+      // ignore non-json error body
+    }
+    throw new Error(detail);
+  }
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  return (await res.json()) as T;
+}
+
+export const api = {
+  getHealth: () => request<HealthStatus>("/api/health"),
+  getProfile: () => request<MasterProfile>("/api/profile"),
+  updateProfile: (data: ProfileUpdatePayload) =>
+    request<MasterProfile>("/api/profile", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  createExperience: (data: ExperiencePayload) =>
+    request<ExperienceItem>("/api/profile/experiences", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateExperience: (id: number, data: ExperiencePayload) =>
+    request<ExperienceItem>(`/api/profile/experiences/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteExperience: (id: number) =>
+    request<void>(`/api/profile/experiences/${id}`, {
+      method: "DELETE",
+    }),
+  importLegacyProfile: () =>
+    request<LegacyImportResult>("/api/profile/import-legacy", {
+      method: "POST",
+    }),
+  getSettings: () => request<SystemSettings>("/api/settings"),
+  saveSettings: (data: SettingsUpdatePayload) =>
+    request<SystemSettings>("/api/settings", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  previewResume: (spec: ResumeSpecPayload) =>
+    request<PreviewResponse>("/api/compiler/preview", {
+      method: "POST",
+      body: JSON.stringify(spec),
+    }),
+  exportResume: async (
+    spec: ResumeSpecPayload,
+    format: "pdf" | "docx"
+  ): Promise<{ blob: Blob; filename: string }> => {
+    const res = await fetch(`/api/compiler/export?format=${format}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...spec, format }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const errJson = (await res.json()) as { detail?: string };
+        if (errJson.detail) detail = errJson.detail;
+      } catch {
+        // ignore non-json error body
+      }
+      throw new Error(detail);
+    }
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    const filename =
+      match?.[1] || `${spec.filename_title || "Resume"}.${format}`;
+    const blob = await res.blob();
+    return { blob, filename };
+  },
+  getScraperSessionStatus: () =>
+    request<ScraperSessionStatus>("/api/scraper/session/status"),
+  launchScraperLogin: () =>
+    request<ScraperSessionStatus>("/api/scraper/session/login", {
+      method: "POST",
+    }),
+  startScraper: (payload: ScraperStartPayload) =>
+    request<{ run_id: string }>("/api/scraper/start", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  stopScraper: (runId?: string) =>
+    request<{ status: string; run_id: string }>("/api/scraper/stop", {
+      method: "POST",
+      body: JSON.stringify({ run_id: runId ?? null }),
+    }),
+  getScrapedJobs: () => request<JobPostingItem[]>("/api/scraper/jobs"),
+  updateJobStatus: (jobId: number, status: string) =>
+    request<JobPostingItem>(`/api/scraper/jobs/${jobId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+  tailorJob: (jobId: number) =>
+    request<TailoringResult>(`/api/tailor/${jobId}`, {
+      method: "POST",
+    }),
+  getGupyRundown: (jobId: number) =>
+    request<GupyRundown>(`/api/tailor/${jobId}/gupy-rundown`),
+  solveQuestion: (jobId: number, question: string) =>
+    request<SolveQuestionResponse>(`/api/tailor/${jobId}/solve-question`, {
+      method: "POST",
+      body: JSON.stringify({ question }),
+    }),
+  exportCoverLetter: async (
+    spec: CoverLetterSpecPayload,
+    format: "pdf" | "docx"
+  ): Promise<{ blob: Blob; filename: string }> => {
+    const res = await fetch(`/api/compiler/cover-letter/export?format=${format}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...spec, format }),
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const errJson = (await res.json()) as { detail?: string };
+        if (errJson.detail) detail = errJson.detail;
+      } catch {
+        // ignore non-json error body
+      }
+      throw new Error(detail);
+    }
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    const filename =
+      match?.[1] || `${spec.filename_title || "Cover_Letter"}.${format}`;
+    const blob = await res.blob();
+    return { blob, filename };
+  },
+};

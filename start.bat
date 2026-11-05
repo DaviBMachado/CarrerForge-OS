@@ -27,18 +27,26 @@ call .venv\Scripts\activate.bat
 echo [CareerForge OS] Verifying backend dependencies...
 python -m pip install -q -r backend\requirements.txt
 
-:: 3. Check if frontend build exists, build if missing
-if not exist "frontend\dist\index.html" (
-    echo [CareerForge OS] Frontend build not found. Building frontend...
+:: 3. Run database migrations
+echo [CareerForge OS] Running database migrations...
+python -m alembic -c backend\alembic.ini upgrade head
+
+:: 4. Check frontend dependencies and build production bundle if missing
+if not exist "frontend\node_modules" (
+    echo [CareerForge OS] Installing frontend dependencies...
     cd frontend
-    if not exist "node_modules" (
-        call npm install
-    )
+    call npm install
+    cd ..
+)
+
+if not exist "backend\app\static\index.html" (
+    echo [CareerForge OS] Frontend production bundle not found. Building frontend...
+    cd frontend
     call npm run build
     cd ..
 )
 
-:: 4. Launch browser and FastAPI server
+:: 5. Launch browser and FastAPI server
 echo [CareerForge OS] Launching default browser to http://localhost:8000 ...
 start "" "http://localhost:8000"
 
