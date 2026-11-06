@@ -123,6 +123,7 @@ async def _execute_run(
                 jobs = await scrape_gupy_jobs(
                     query=query,
                     location=location,
+                    remote=remote,
                     max_jobs=max_jobs,
                     on_log=on_log,
                 )
