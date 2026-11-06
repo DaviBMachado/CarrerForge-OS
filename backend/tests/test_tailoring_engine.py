@@ -304,6 +304,10 @@ def test_build_tailoring_system_prompt_includes_strict_rules():
     assert "AI Automation Engineer" in prompt
     assert "python, llm, rag" in prompt
     assert "3-paragraph cover letter" in prompt
+    assert "Action + Scope + Metric" in prompt
+    assert "courteous professional greeting" in prompt
+    assert "Prohibit corporate flattery" in prompt
+    assert "Conceptual Anti-AI directive" in prompt
 
 
 def test_gupy_rundown_generated_and_persisted(
@@ -369,7 +373,11 @@ def test_solve_question_endpoint_returns_grounded_answer_and_blocks_hallucinatio
         "grounded_experiences": ["Itaú Unibanco"],
     }
 
+    captured_qa_requests: list[dict] = []
+
     def mock_qa_handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        captured_qa_requests.append(body)
         return httpx.Response(
             200,
             json={
@@ -399,6 +407,10 @@ def test_solve_question_endpoint_returns_grounded_answer_and_blocks_hallucinatio
             assert "10,000+" in data["answer"]
             assert "Itaú Unibanco" in data["grounded_experiences"]
             assert data["language"] == "en"
+
+            qa_sys_prompt = captured_qa_requests[0]["systemInstruction"]["parts"][0]["text"]
+            assert "objective, impersonal, and binary" in qa_sys_prompt
+            assert "ANTI-AI DIRECTIVES" in qa_sys_prompt
 
             artifact = session.exec(
                 select(TailoredArtifact).where(TailoredArtifact.job_id == job.id)
