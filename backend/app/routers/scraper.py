@@ -8,7 +8,13 @@ from sqlmodel import Session, col, select
 from backend.app.db import get_db
 from backend.app.models import JobPosting
 from backend.app.routers.profile import get_or_create_default_profile
-from backend.app.services.browser_manager import get_session_status, launch_login_session
+from backend.app.services.browser_manager import (
+    close_interactive_session,
+    get_session_status,
+    launch_login_session,
+    open_interactive_session,
+    verify_interactive_session,
+)
 from backend.app.services.scrapers.runner import (
     RUNS,
     start_scraper_run,
@@ -41,6 +47,27 @@ def session_status() -> dict[str, Any]:
 @router.post("/session/login")
 async def session_login() -> dict[str, Any]:
     return await launch_login_session()
+
+
+@router.post("/session/open")
+async def session_open() -> dict[str, Any]:
+    return await open_interactive_session()
+
+
+@router.post("/session/verify")
+async def session_verify() -> dict[str, Any]:
+    res = await verify_interactive_session()
+    if not res.get("authenticated"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Authentication not detected. Please complete login in the opened browser.",
+        )
+    return res
+
+
+@router.post("/session/close")
+async def session_close() -> dict[str, Any]:
+    return await close_interactive_session()
 
 
 @router.post("/start")

@@ -103,3 +103,59 @@ async def test_get_authenticated_context_creates_persistent_dir(temp_session_dir
             assert temp_session_dir.exists()
 
     mock_context.close.assert_awaited_once()
+
+
+def test_session_open_verify_close_lifecycle(client: TestClient, temp_session_dir: Path):
+    mock_page_1 = AsyncMock()
+    mock_page_2 = AsyncMock()
+    mock_context = AsyncMock()
+    mock_context.pages = [mock_page_1]
+    mock_context.new_page = AsyncMock(return_value=mock_page_2)
+    mock_context.storage_state = AsyncMock(return_value={"cookies": []})
+
+    mock_pw = MagicMock()
+    mock_pw.chromium.launch_persistent_context = AsyncMock(return_value=mock_context)
+    mock_pw_cm = AsyncMock()
+    mock_pw_cm.__aenter__.return_value = mock_pw
+
+    with patch(
+        "backend.app.services.browser_manager.async_playwright",
+        return_value=mock_pw_cm,
+    ):
+        # 1. Open interactive session
+        open_resp = client.post("/api/scraper/session/open")
+        assert open_resp.status_code == 200
+        assert open_resp.json() == {"status": "opened"}
+        mock_pw.chromium.launch_persistent_context.assert_called_once()
+        mock_context.close.assert_not_called()
+
+        # 2. Verify without cookies -> 400 Bad Request
+        verify_fail = client.post("/api/scraper/session/verify")
+        assert verify_fail.status_code == 400
+        mock_context.close.assert_not_called()
+
+        # 3. Simulate cookie injection into SQLite profile
+        import sqlite3
+
+        cookie_db = temp_session_dir / "Default" / "Network" / "Cookies"
+        cookie_db.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(cookie_db)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT)")
+        cur.execute("INSERT INTO cookies VALUES ('.linkedin.com', 'li_at', 'auth_token_xyz')")
+        conn.commit()
+        conn.close()
+
+        # 4. Verify with cookies -> 200 OK, closes context and writes state.json
+        verify_ok = client.post("/api/scraper/session/verify")
+        assert verify_ok.status_code == 200
+        data = verify_ok.json()
+        assert data["authenticated"] is True
+        assert data["linkedin"] is True
+        mock_context.close.assert_called_once()
+        assert (temp_session_dir / "state.json").is_file()
+
+        # 5. Explicit close is idempotent
+        close_resp = client.post("/api/scraper/session/close")
+        assert close_resp.status_code == 200
+        assert close_resp.json() == {"status": "closed"}

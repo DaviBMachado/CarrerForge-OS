@@ -15,7 +15,12 @@ from backend.app.routers.tailor import router as tailor_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    yield
+    try:
+        yield
+    finally:
+        from backend.app.services.browser_manager import close_interactive_session
+
+        await close_interactive_session()
 
 
 app = FastAPI(title="CareerForge OS", version="0.1.0", lifespan=lifespan)

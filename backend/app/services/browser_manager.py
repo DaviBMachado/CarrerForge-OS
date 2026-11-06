@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sqlite3
 from collections.abc import AsyncGenerator
@@ -27,6 +28,10 @@ DEFAULT_USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
+_active_pw_cm: Any = None
+_active_context: Any = None
+_session_lock = asyncio.Lock()
+
 
 def ensure_session_dir() -> Path:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
@@ -36,6 +41,10 @@ def ensure_session_dir() -> Path:
 def _save_state_data(state: dict[str, Any]) -> None:
     ensure_session_dir()
     STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
+    try:
+        STATE_FILE.chmod(0o600)
+    except Exception:
+        pass
 
 
 @asynccontextmanager
@@ -55,6 +64,53 @@ async def get_authenticated_context(headless: bool = True) -> AsyncGenerator[Any
                 _save_state_data(state)
         finally:
             await context.close()
+
+
+async def close_interactive_session() -> dict[str, str]:
+    global _active_pw_cm, _active_context
+    async with _session_lock:
+        if _active_context is not None:
+            try:
+                await _active_context.close()
+            except Exception:
+                pass
+            _active_context = None
+        if _active_pw_cm is not None:
+            try:
+                await _active_pw_cm.__aexit__(None, None, None)
+            except Exception:
+                pass
+            _active_pw_cm = None
+    return {"status": "closed"}
+
+
+async def open_interactive_session() -> dict[str, Any]:
+    global _active_pw_cm, _active_context
+    await close_interactive_session()
+    session_path = ensure_session_dir()
+    async with _session_lock:
+        pw_cm = async_playwright()
+        pw = await pw_cm.__aenter__()
+        try:
+            context = await pw.chromium.launch_persistent_context(
+                str(session_path),
+                headless=False,
+                user_agent=DEFAULT_USER_AGENT,
+                viewport={"width": 1280, "height": 800},
+            )
+            page_linkedin = context.pages[0] if context.pages else await context.new_page()
+            await page_linkedin.goto(LINKEDIN_LOGIN_URL)
+            page_gupy = await context.new_page()
+            await page_gupy.goto(GUPY_LOGIN_URL)
+            _active_pw_cm = pw_cm
+            _active_context = context
+        except Exception:
+            try:
+                await pw_cm.__aexit__(None, None, None)
+            except Exception:
+                pass
+            raise
+    return {"status": "opened"}
 
 
 async def launch_login_session() -> dict[str, Any]:
@@ -99,6 +155,47 @@ def _check_sqlite_cookies(cookie_db: Path) -> tuple[bool, bool]:
         return has_li, has_gupy
     except Exception:
         return False, False
+
+
+def _dump_sqlite_to_state() -> None:
+    cookies: list[dict[str, Any]] = []
+    for rel in ("Default/Network/Cookies", "Default/Cookies", "Network/Cookies"):
+        db_path = SESSION_DIR / rel
+        if not db_path.is_file():
+            continue
+        try:
+            conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT host_key, name, value FROM cookies")
+                for host_key, name, value in cur.fetchall():
+                    cookies.append({"name": name, "domain": host_key, "value": value or ""})
+            finally:
+                conn.close()
+        except Exception:
+            pass
+    if cookies:
+        _save_state_data({"cookies": cookies, "origins": []})
+
+
+async def verify_interactive_session() -> dict[str, Any]:
+    global _active_context
+    if _active_context is not None:
+        try:
+            state = await _active_context.storage_state()
+            if isinstance(state, dict):
+                _save_state_data(state)
+        except Exception:
+            pass
+
+    status = get_session_status()
+    if status["authenticated"]:
+        if not STATE_FILE.is_file():
+            _dump_sqlite_to_state()
+        await close_interactive_session()
+        return {"status": "authenticated", **status}
+
+    return {"status": "unauthenticated", **status}
 
 
 def get_session_status() -> dict[str, Any]:
