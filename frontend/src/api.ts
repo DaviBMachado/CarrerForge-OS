@@ -140,8 +140,11 @@ export interface ScraperSessionStatus {
   authenticated: boolean;
   linkedin: boolean;
   gupy: boolean;
+  platforms?: Record<string, boolean>;
+  active_platform?: string | null;
   session_dir: string;
   status?: string;
+  browser_open?: boolean;
 }
 
 export interface ScraperStartPayload {
@@ -291,6 +294,20 @@ export const api = {
     request<ScraperSessionStatus>("/api/scraper/session/status"),
   launchScraperLogin: () =>
     request<ScraperSessionStatus>("/api/scraper/session/login", {
+      method: "POST",
+    }),
+  openScraperSession: (platform?: string) =>
+    request<{ status: string; platform?: string }>("/api/scraper/session/open", {
+      method: "POST",
+      body: JSON.stringify({ platform: platform ?? null }),
+    }),
+  verifyScraperSession: (platform?: string) =>
+    request<ScraperSessionStatus>("/api/scraper/session/verify", {
+      method: "POST",
+      body: JSON.stringify({ platform: platform ?? null }),
+    }),
+  closeScraperSession: () =>
+    request<{ status: string }>("/api/scraper/session/close", {
       method: "POST",
     }),
   startScraper: (payload: ScraperStartPayload) =>

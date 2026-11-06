@@ -28,7 +28,8 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
 
   const [sessionStatus, setSessionStatus] =
     useState<ScraperSessionStatus | null>(null);
-  const [launchingLogin, setLaunchingLogin] = useState(false);
+  const [activeWaitingPlatform, setActiveWaitingPlatform] = useState<string | null>(null);
+  const [sessionLoadingPlatform, setSessionLoadingPlatform] = useState<string | null>(null);
 
   const jobs = useAppStore((s) => s.jobs);
   const setJobs = useAppStore((s) => s.setJobs);
@@ -65,6 +66,11 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     try {
       const status = await api.getScraperSessionStatus();
       setSessionStatus(status);
+      if (status.browser_open) {
+        setActiveWaitingPlatform(status.active_platform || "all");
+      } else {
+        setActiveWaitingPlatform(null);
+      }
     } catch {
       // ignore initial status fetch errors
     }
@@ -93,24 +99,63 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     });
   };
 
-  const handleOpenBrowserLogin = async () => {
-    setLaunchingLogin(true);
+  const handleOpenSession = async (platformId: string) => {
+    setSessionLoadingPlatform(platformId);
     try {
-      const res = await api.launchScraperLogin();
-      setSessionStatus(res);
+      await api.openScraperSession(platformId);
+      setActiveWaitingPlatform(platformId);
+      const platLabel = PLATFORMS.find((p) => p.id === platformId)?.label || platformId;
       onNotify(
         "success",
-        res.authenticated
-          ? "Browser session authenticated and saved."
-          : "Browser session closed. Check login status badge."
+        `Navegador aberto para ${platLabel}. Conclua o login na janela e depois clique em 'Verificar Login'.`
       );
     } catch (err) {
       onNotify(
         "error",
-        err instanceof Error ? err.message : "Failed to launch login browser"
+        err instanceof Error ? err.message : `Falha ao abrir navegador para login no ${platformId}`
       );
     } finally {
-      setLaunchingLogin(false);
+      setSessionLoadingPlatform(null);
+    }
+  };
+
+  const handleVerifySession = async (platformId: string) => {
+    setSessionLoadingPlatform(platformId);
+    try {
+      const res = await api.verifyScraperSession(platformId);
+      setSessionStatus(res);
+      setActiveWaitingPlatform(null);
+      const platLabel = PLATFORMS.find((p) => p.id === platformId)?.label || platformId;
+      onNotify(
+        "success",
+        `Login no ${platLabel} autenticado com sucesso! Cookies salvos para scraping.`
+      );
+    } catch (err) {
+      onNotify(
+        "error",
+        err instanceof Error && err.message
+          ? err.message
+          : `Sessao ainda nao detectada para ${platformId}. Conclua o login e tente novamente.`
+      );
+    } finally {
+      setSessionLoadingPlatform(null);
+    }
+  };
+
+  const handleCloseSession = async () => {
+    setSessionLoadingPlatform("close");
+    try {
+      await api.closeScraperSession();
+      setActiveWaitingPlatform(null);
+      await refreshSessionStatus();
+      onNotify("success", "Navegador fechado.");
+    } catch (err) {
+      onNotify(
+        "error",
+        err instanceof Error ? err.message : "Falha ao fechar navegador"
+      );
+    } finally {
+      setSessionLoadingPlatform(null);
     }
   };
 
@@ -217,7 +262,6 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     }
   };
 
-  const isConnected = Boolean(sessionStatus?.authenticated);
   const visibleJobs = jobs.filter((j) =>
     showArchived ? j.status === "archived" : j.status !== "archived"
   );
@@ -234,31 +278,109 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
           </p>
         </div>
 
-        <div className="hub-actions" style={{ alignItems: "center" }}>
-          <div
-            className="status-pill"
-            role="status"
-            aria-label="Browser Session Status"
-          >
-            <span
-              className="status-dot"
-              style={{
-                backgroundColor: isConnected
-                  ? "var(--success)"
-                  : "var(--warning)",
-              }}
-            />
-            <span>Session: {isConnected ? "Connected" : "Disconnected"}</span>
-          </div>
+        <div className="hub-actions" style={{ alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          {PLATFORMS.map((p) => {
+            const isPlatformConnected = sessionStatus?.platforms
+              ? !!sessionStatus.platforms[p.id]
+              : p.id === "linkedin"
+              ? !!sessionStatus?.linkedin
+              : p.id === "gupy"
+              ? !!sessionStatus?.gupy
+              : false;
 
-          <button
-            type="button"
-            className="btn"
-            onClick={handleOpenBrowserLogin}
-            disabled={launchingLogin}
-          >
-            {launchingLogin ? "Browser Open..." : "Open Browser for Login"}
-          </button>
+            const isThisPlatformWaiting =
+              activeWaitingPlatform === p.id ||
+              (activeWaitingPlatform === "all" && !isPlatformConnected);
+            const isAnyWaiting = !!activeWaitingPlatform;
+            const isLoading =
+              sessionLoadingPlatform === p.id ||
+              (sessionLoadingPlatform === "close" && isThisPlatformWaiting);
+
+            return (
+              <div
+                key={p.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  padding: "0.3rem 0.65rem",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--border-subtle)",
+                  backgroundColor: "var(--surface-muted)",
+                }}
+              >
+                <span
+                  className="status-dot"
+                  style={{
+                    backgroundColor: isPlatformConnected
+                      ? "var(--success)"
+                      : isThisPlatformWaiting
+                      ? "var(--primary)"
+                      : "var(--warning)",
+                  }}
+                />
+                <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                  {p.label}:
+                </span>
+                <span
+                  style={{
+                    fontSize: "0.8rem",
+                    color: isPlatformConnected
+                      ? "var(--success)"
+                      : isThisPlatformWaiting
+                      ? "var(--primary)"
+                      : "var(--ink-secondary)",
+                    marginRight: "0.3rem",
+                  }}
+                >
+                  {isPlatformConnected
+                    ? "Conectado"
+                    : isThisPlatformWaiting
+                    ? "Aguardando..."
+                    : "Desconectado"}
+                </span>
+
+                {!isThisPlatformWaiting && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => handleOpenSession(p.id)}
+                    disabled={isAnyWaiting || isLoading}
+                    style={{ fontSize: "0.75rem", padding: "0.2rem 0.55rem" }}
+                  >
+                    {isLoading
+                      ? "Abrindo..."
+                      : isPlatformConnected
+                      ? "Reconectar"
+                      : "Login"}
+                  </button>
+                )}
+
+                {isThisPlatformWaiting && (
+                  <div style={{ display: "flex", gap: "0.25rem" }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => handleVerifySession(p.id)}
+                      disabled={isLoading}
+                      style={{ fontSize: "0.75rem", padding: "0.2rem 0.55rem", fontWeight: 600 }}
+                    >
+                      {isLoading ? "Verificando..." : "Verificar"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={handleCloseSession}
+                      disabled={isLoading}
+                      style={{ fontSize: "0.75rem", padding: "0.2rem 0.45rem" }}
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 

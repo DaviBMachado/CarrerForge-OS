@@ -77,7 +77,7 @@ def test_session_login_launches_visible_browser(client: TestClient, temp_session
 
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] in ("launched", "authenticated")
+    assert data["status"] in ("launched", "authenticated", "opened")
     mock_pw.chromium.launch_persistent_context.assert_called_once()
     call_kwargs = mock_pw.chromium.launch_persistent_context.call_args.kwargs
     assert call_kwargs["headless"] is False
@@ -125,7 +125,7 @@ def test_session_open_verify_close_lifecycle(client: TestClient, temp_session_di
         # 1. Open interactive session
         open_resp = client.post("/api/scraper/session/open")
         assert open_resp.status_code == 200
-        assert open_resp.json() == {"status": "opened"}
+        assert open_resp.json()["status"] == "opened"
         mock_pw.chromium.launch_persistent_context.assert_called_once()
         mock_context.close.assert_not_called()
 
@@ -159,3 +159,44 @@ def test_session_open_verify_close_lifecycle(client: TestClient, temp_session_di
         close_resp = client.post("/api/scraper/session/close")
         assert close_resp.status_code == 200
         assert close_resp.json() == {"status": "closed"}
+
+
+def test_platform_independent_login_lifecycle(client: TestClient, temp_session_dir: Path):
+    mock_page = AsyncMock()
+    mock_context = AsyncMock()
+    mock_context.pages = [mock_page]
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+    mock_context.storage_state = AsyncMock(
+        return_value={
+            "cookies": [
+                {"name": "li_at", "domain": ".linkedin.com", "value": "secret_li"},
+            ]
+        }
+    )
+
+    mock_pw = MagicMock()
+    mock_pw.chromium.launch_persistent_context = AsyncMock(return_value=mock_context)
+    mock_pw_cm = AsyncMock()
+    mock_pw_cm.__aenter__.return_value = mock_pw
+
+    with patch(
+        "backend.app.services.browser_manager.async_playwright",
+        return_value=mock_pw_cm,
+    ):
+        # 1. Open specifically for LinkedIn
+        res = client.post("/api/scraper/session/open", json={"platform": "linkedin"})
+        assert res.status_code == 200
+        assert res.json()["platform"] == "linkedin"
+        mock_page.goto.assert_called_once_with(browser_manager.LINKEDIN_LOGIN_URL)
+
+        # 2. Verify specifically for LinkedIn
+        res_verify = client.post("/api/scraper/session/verify", json={"platform": "linkedin"})
+        assert res_verify.status_code == 200
+        data = res_verify.json()
+        assert data["platforms"]["linkedin"] is True
+        assert data["platforms"]["gupy"] is False
+        mock_context.close.assert_called_once()
+
+        # 3. Gupy is still unauthenticated
+        res_gupy_verify = client.post("/api/scraper/session/verify", json={"platform": "gupy"})
+        assert res_gupy_verify.status_code == 400

@@ -44,23 +44,44 @@ def session_status() -> dict[str, Any]:
     return get_session_status()
 
 
+class SessionActionRequest(BaseModel):
+    platform: str | None = None
+
+
 @router.post("/session/login")
 async def session_login() -> dict[str, Any]:
     return await launch_login_session()
 
 
 @router.post("/session/open")
-async def session_open() -> dict[str, Any]:
-    return await open_interactive_session()
+async def session_open(
+    payload: SessionActionRequest | None = None,
+    platform: str | None = None,
+) -> dict[str, Any]:
+    target = (payload.platform if payload else None) or platform
+    return await open_interactive_session(target)
 
 
 @router.post("/session/verify")
-async def session_verify() -> dict[str, Any]:
-    res = await verify_interactive_session()
-    if not res.get("authenticated"):
+async def session_verify(
+    payload: SessionActionRequest | None = None,
+    platform: str | None = None,
+) -> dict[str, Any]:
+    target = (payload.platform if payload else None) or platform
+    res = await verify_interactive_session(target)
+    is_valid = (
+        res.get("platforms", {}).get(target, False) if target else res.get("authenticated", False)
+    )
+    if not is_valid:
+        detail_msg = (
+            f"Authentication not detected for {target}. "
+            "Please complete login in the opened browser."
+            if target
+            else "Authentication not detected. Please complete login in the opened browser."
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Authentication not detected. Please complete login in the opened browser.",
+            detail=detail_msg,
         )
     return res
 
