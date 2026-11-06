@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, HealthStatus, JobPostingItem, SystemSettings } from "./api";
 import { JobRadar } from "./components/JobRadar";
 import { MasterProfileHub } from "./components/MasterProfileHub";
-import { ResumePreviewer } from "./components/ResumePreviewer";
+import { GeneralResumeBuilder } from "./components/GeneralResumeBuilder";
 import { SettingsModal } from "./components/SettingsModal";
 import { TailoringStudio } from "./components/TailoringStudio";
 import { useAppStore } from "./store";
@@ -110,7 +110,7 @@ export function App() {
               onClick={() => setActiveTab("compiler")}
               aria-current={activeTab === "compiler" ? "page" : undefined}
             >
-              Resume Previewer
+              General Resume Builder
             </button>
             <button
               type="button"
@@ -242,7 +242,7 @@ export function App() {
             width: "100%",
           }}
         >
-          <ResumePreviewer onNotify={notify} />
+          <GeneralResumeBuilder onNotify={notify} />
         </div>
 
         <div

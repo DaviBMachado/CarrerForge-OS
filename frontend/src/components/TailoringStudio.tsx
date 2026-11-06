@@ -10,7 +10,7 @@ import {
   ResumeSpecPayload,
   SolveQuestionResponse,
 } from "../api";
-import { base64ToPdfBlob } from "./ResumePreviewer";
+import { base64ToPdfBlob } from "./GeneralResumeBuilder";
 import { useAppStore } from "../store";
 
 interface TailoringStudioProps {

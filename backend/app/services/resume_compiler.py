@@ -443,14 +443,12 @@ class ResumeCompiler:
                 elif btype == "bullet":
                     story.append(Paragraph(f"{BULLET_CHAR}&nbsp;{text}", styles["bullet"]))
                 elif btype == "skillline":
-                    for i, part in enumerate(text.split("||")):
-                        part = part.strip()
-                        if not part:
-                            continue
-                        html = ("&nbsp;&nbsp;|&nbsp;&nbsp;" if i > 0 else "") + re.sub(
-                            r"\*\*(.+?)\*\*", r"<b>\1</b>", part
-                        )
-                        story.append(Paragraph(html, styles["skillline"]))
+                    parts = [p.strip() for p in text.split("||") if p.strip()]
+                    if not parts:
+                        continue
+                    formatted_parts = [re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", p) for p in parts]
+                    html = " &nbsp;|&nbsp; ".join(formatted_parts)
+                    story.append(Paragraph(html, styles["skillline"]))
 
         doc.build(story)
         page_count = int(getattr(doc, "page", 1))
