@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlmodel import Session, col, select
 
 from backend.app.db import get_db
@@ -14,7 +14,10 @@ from backend.app.schemas.profile import (
     ProfileRead,
     ProfileUpdate,
 )
+from backend.app.services.document_parser import extract_text_from_file
 from backend.app.services.legacy_importer import import_legacy_data
+from backend.app.services.llm_orchestrator import LLMProviderError
+from backend.app.services.profile_ingestion import parse_resume_text, persist_profile_ingestion
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
@@ -179,3 +182,50 @@ def import_legacy_profile(session: DBSession) -> LegacyImportResponse:
     profile = get_or_create_default_profile(session)
     result = import_legacy_data(session, profile)
     return LegacyImportResponse(**result)
+
+
+@router.post("/upload", response_model=ProfileRead)
+async def upload_resume(
+    session: DBSession,
+    file: Annotated[UploadFile, File()],
+) -> ProfileRead:
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="File name is required."
+        )
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="File size exceeds maximum limit of 10MB.",
+        )
+
+    try:
+        extracted_text = extract_text_from_file(file.filename, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    try:
+        parsed_data = parse_resume_text(extracted_text, session)
+    except LLMProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM ingestion failed: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process resume text: {exc}",
+        ) from exc
+
+    profile = get_or_create_default_profile(session)
+    try:
+        persist_profile_ingestion(session, profile, parsed_data)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database persistence failed: {exc}",
+        ) from exc
+
+    return serialize_profile(profile, session)

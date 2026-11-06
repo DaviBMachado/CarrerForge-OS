@@ -253,6 +253,25 @@ export const api = {
     request<LegacyImportResult>("/api/profile/import-legacy", {
       method: "POST",
     }),
+  uploadResume: async (file: File): Promise<MasterProfile> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/profile/upload", {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const errJson = (await res.json()) as { detail?: string };
+        if (errJson.detail) detail = errJson.detail;
+      } catch {
+        // ignore non-json error body
+      }
+      throw new Error(detail);
+    }
+    return (await res.json()) as MasterProfile;
+  },
   getSettings: () => request<SystemSettings>("/api/settings"),
   saveSettings: (data: SettingsUpdatePayload) =>
     request<SystemSettings>("/api/settings", {

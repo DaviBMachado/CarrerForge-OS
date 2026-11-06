@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   BulletItem,
@@ -46,6 +46,9 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
   const [loading, setLoading] = useState(!useAppStore.getState().profileLoaded);
   const [savingProfile, setSavingProfile] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [uploadingResume, setUploadingResume] = useState(false);
+  const [isDraggingResume, setIsDraggingResume] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Personal & Contact state
   const [fullName, setFullName] = useState("");
@@ -163,6 +166,38 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
       );
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleResumeUpload = async (file: File) => {
+    const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+    const allowed = [".pdf", ".docx", ".md", ".txt"];
+    if (!allowed.includes(ext)) {
+      onNotify(
+        "error",
+        `Unsupported file type '${ext}'. Please upload a .pdf, .docx, .md, or .txt file.`
+      );
+      return;
+    }
+
+    setUploadingResume(true);
+    try {
+      const updated = await api.uploadResume(file);
+      hydrateFromProfile(updated);
+      onNotify(
+        "success",
+        `Resume parsed successfully! Extracted ${updated.experiences?.length || 0} experiences and updated profile.`
+      );
+    } catch (err) {
+      onNotify(
+        "error",
+        err instanceof Error ? err.message : "Failed to parse and upload resume"
+      );
+    } finally {
+      setUploadingResume(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   };
 
@@ -392,7 +427,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
             type="button"
             className="btn"
             onClick={handleImportLegacy}
-            disabled={importing}
+            disabled={importing || uploadingResume}
           >
             {importing ? "Importing..." : "Import Legacy Resume"}
           </button>
@@ -400,12 +435,129 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
             type="button"
             className="btn btn-primary"
             onClick={handleSaveProfile}
-            disabled={savingProfile}
+            disabled={savingProfile || uploadingResume}
           >
             {savingProfile ? "Saving Profile..." : "Save Profile & Skills"}
           </button>
         </div>
       </div>
+
+      {/* Resume Upload Dropzone */}
+      <section
+        className={`panel ${isDraggingResume ? "drag-over" : ""}`}
+        style={{
+          border: isDraggingResume
+            ? "2px dashed var(--accent)"
+            : "2px dashed var(--border-subtle)",
+          backgroundColor: isDraggingResume
+            ? "var(--accent-tint)"
+            : "var(--bg-surface)",
+          padding: "1.5rem",
+          borderRadius: "8px",
+          textAlign: "center",
+          transition: "border-color 0.15s ease, background-color 0.15s ease",
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!uploadingResume) setIsDraggingResume(true);
+        }}
+        onDragLeave={() => setIsDraggingResume(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDraggingResume(false);
+          if (!uploadingResume && e.dataTransfer.files?.[0]) {
+            handleResumeUpload(e.dataTransfer.files[0]);
+          }
+        }}
+        aria-label="Upload resume document"
+      >
+        <input
+          type="file"
+          ref={fileInputRef}
+          style={{ display: "none" }}
+          accept=".pdf,.docx,.md,.txt"
+          onChange={(e) => {
+            if (e.target.files?.[0]) {
+              handleResumeUpload(e.target.files[0]);
+            }
+          }}
+        />
+
+        {uploadingResume ? (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "0.75rem",
+              padding: "0.5rem 0",
+            }}
+          >
+            <div
+              className="spinner"
+              style={{
+                width: "2rem",
+                height: "2rem",
+                border: "3px solid var(--border-subtle)",
+                borderTopColor: "var(--accent)",
+                borderRadius: "50%",
+              }}
+            />
+            <div style={{ fontWeight: 600, color: "var(--accent)" }}>
+              Extraindo texto e estruturando perfil...
+            </div>
+            <div style={{ fontSize: "0.85rem", color: "var(--ink-secondary)" }}>
+              A IA está analisando seu currículo e mapeando contatos, habilidades e experiências.
+            </div>
+          </div>
+        ) : (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "0.5rem",
+            }}
+          >
+            <div style={{ fontSize: "1rem", fontWeight: 600 }}>
+              Ingestão Inteligente de Currículo
+            </div>
+            <p
+              style={{
+                fontSize: "0.85rem",
+                color: "var(--ink-secondary)",
+                margin: 0,
+                maxWidth: "600px",
+              }}
+            >
+              Arraste e solte seu arquivo de currículo (.pdf, .docx, .md, .txt) aqui ou clique
+              no botão abaixo para estruturar automaticamente suas experiências e habilidades.
+            </p>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "1rem",
+                marginTop: "0.5rem",
+              }}
+            >
+              <button
+                type="button"
+                className="btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingResume}
+              >
+                Selecionar Arquivo
+              </button>
+              <span
+                style={{ fontSize: "0.75rem", color: "var(--ink-secondary)" }}
+              >
+                Formatos aceitos: PDF, DOCX, Markdown, TXT (máx. 10MB)
+              </span>
+            </div>
+          </div>
+        )}
+      </section>
 
       <div className="hub-grid">
         {/* 1. Contact & Personal Information Card */}
