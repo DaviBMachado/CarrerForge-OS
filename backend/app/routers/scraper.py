@@ -5,9 +5,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, col, select
 
+from backend.app.auth import CurrentUser
 from backend.app.db import get_db
 from backend.app.models import JobPosting
-from backend.app.routers.profile import get_or_create_default_profile
 from backend.app.services.browser_manager import (
     close_interactive_session,
     get_session_status,
@@ -145,11 +145,10 @@ class JobStatusUpdateRequest(BaseModel):
 
 
 @router.get("/jobs", response_model=list[JobPosting])
-def list_scraped_jobs(session: DBSession) -> list[JobPosting]:
-    profile = get_or_create_default_profile(session)
+def list_scraped_jobs(session: DBSession, current_user: CurrentUser) -> list[JobPosting]:
     jobs = session.exec(
         select(JobPosting)
-        .where(JobPosting.user_id == profile.user_id)
+        .where(JobPosting.user_id == current_user.id)
         .order_by(col(JobPosting.id).desc())
     ).all()
     return list(jobs)
@@ -160,10 +159,10 @@ def update_job_status(
     job_id: int,
     payload: JobStatusUpdateRequest,
     session: DBSession,
+    current_user: CurrentUser,
 ) -> JobPosting:
-    profile = get_or_create_default_profile(session)
     job = session.get(JobPosting, job_id)
-    if not job or job.user_id != profile.user_id:
+    if not job or job.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Job posting not found",

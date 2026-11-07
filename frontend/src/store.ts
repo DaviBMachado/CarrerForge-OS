@@ -6,8 +6,27 @@ import {
   ScraperStreamEvent,
   SystemSettings,
 } from "./api";
+import { AppLanguage } from "./i18n";
+
+const LANGUAGE_STORAGE_KEY = "careerforge_language";
+
+function getInitialLanguage(): AppLanguage {
+  try {
+    const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (saved === "pt-BR" || saved === "en") {
+      return saved;
+    }
+  } catch {
+    // localStorage might be unavailable
+  }
+  return "en";
+}
 
 interface AppState {
+  // i18n Language
+  language: AppLanguage;
+  setLanguage: (lang: AppLanguage) => void;
+
   // Jobs
   jobs: JobPostingItem[];
   selectedJob: JobPostingItem | null;
@@ -37,6 +56,16 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
+  language: getInitialLanguage(),
+  setLanguage: (language: AppLanguage) => {
+    try {
+      localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    } catch {
+      // ignore
+    }
+    set({ language });
+  },
+
   jobs: [],
   selectedJob: null,
   jobsLoaded: false,

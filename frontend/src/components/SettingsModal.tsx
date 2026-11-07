@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api, LLMProvider, SystemSettings } from "../api";
+import { AppLanguage, useTranslation } from "../i18n";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -21,6 +22,7 @@ export function SettingsModal({
   onClose,
   onSaved,
 }: SettingsModalProps) {
+  const { language, setLanguage, t } = useTranslation();
   const [form, setForm] = useState<SystemSettings>({
     active_provider: "gemini",
     gemini_api_key: "",
@@ -188,7 +190,7 @@ export function SettingsModal({
       >
         <div className="panel-header">
           <h2 id="settings-modal-title" className="panel-title">
-            System Settings & LLM Providers
+            {t("settings.title")}
           </h2>
           <button
             type="button"
@@ -205,8 +207,23 @@ export function SettingsModal({
           style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}
         >
           <div className="field">
+            <label className="field-label" htmlFor="setting-language">
+              {t("settings.language")}
+            </label>
+            <select
+              id="setting-language"
+              className="select"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as AppLanguage)}
+            >
+              <option value="en">English (EN)</option>
+              <option value="pt-BR">Português (pt-BR)</option>
+            </select>
+          </div>
+
+          <div className="field">
             <label className="field-label" htmlFor="setting-active-provider">
-              Active LLM Provider
+              {t("settings.activeProvider")}
             </label>
             <select
               ref={selectRef}
@@ -266,7 +283,7 @@ export function SettingsModal({
           <div className="form-grid">
             <div className="field">
               <label className="field-label" htmlFor="setting-scraper-timeout">
-                Scraper Timeout (seconds)
+                {t("settings.timeout")}
               </label>
               <input
                 id="setting-scraper-timeout"
@@ -307,7 +324,7 @@ export function SettingsModal({
                     }))
                   }
                 />
-                Run Scraper in Headless Mode
+                {t("settings.headless")}
               </label>
             </div>
           </div>
@@ -362,7 +379,7 @@ export function SettingsModal({
               onClick={handleTestConnection}
               disabled={testing || saving}
             >
-              {testing ? "Testing..." : "Test Connection"}
+              {testing ? t("settings.testing") : t("settings.testConnection")}
             </button>
 
             <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -372,10 +389,10 @@ export function SettingsModal({
                 onClick={onClose}
                 disabled={saving}
               >
-                Cancel
+                {t("settings.cancel")}
               </button>
               <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? "Saving..." : "Save Settings"}
+                {saving ? t("settings.saving") : t("settings.save")}
               </button>
             </div>
           </div>

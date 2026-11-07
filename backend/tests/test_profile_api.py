@@ -219,3 +219,70 @@ e PostgreSQL.
     assert proj_exp["end_date"] == "2024"
     assert len(proj_exp["bullets_json"]) == 1
     assert "DynamoDB" in proj_exp["bullets_json"][0]["tags"]
+
+
+def test_multi_user_isolation_and_idor_prevention(client: TestClient):
+    # 1. User 1 creates an experience
+    h1 = {"Authorization": "Bearer 1"}
+    h2 = {"Authorization": "Bearer 2"}
+
+    create_resp = client.post(
+        "/api/profile/experiences",
+        headers=h1,
+        json={
+            "company": "User 1 Company",
+            "role": "Lead Architect",
+            "bullets_json": [{"text": "Core platform design", "tags": ["python"]}],
+        },
+    )
+    assert create_resp.status_code == 201
+    exp_id = create_resp.json()["id"]
+
+    # 2. User 2 tries to update User 1's experience (IDOR attempt)
+    update_resp = client.put(
+        f"/api/profile/experiences/{exp_id}",
+        headers=h2,
+        json={"company": "Hacked Company"},
+    )
+    assert update_resp.status_code == 404
+    assert update_resp.json()["detail"] == "Experience not found"
+
+    # 3. User 2 tries to delete User 1's experience (IDOR attempt)
+    delete_resp = client.delete(
+        f"/api/profile/experiences/{exp_id}",
+        headers=h2,
+    )
+    assert delete_resp.status_code == 404
+    assert delete_resp.json()["detail"] == "Experience not found"
+
+    # 4. User 2 verifies their own profile does not contain User 1's experience
+    u2_profile = client.get("/api/profile", headers=h2).json()
+    u2_exp_ids = [e["id"] for e in u2_profile["experiences"]]
+    assert exp_id not in u2_exp_ids
+
+    # 5. User 1 can legitimately update and delete their own experience
+    valid_update = client.put(
+        f"/api/profile/experiences/{exp_id}",
+        headers=h1,
+        json={"company": "User 1 Updated Company"},
+    )
+    assert valid_update.status_code == 200
+    assert valid_update.json()["company"] == "User 1 Updated Company"
+
+    valid_delete = client.delete(f"/api/profile/experiences/{exp_id}", headers=h1)
+    assert valid_delete.status_code == 204
+
+
+def test_require_auth_flag_blocks_unauthenticated_requests(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("CAREERFORGE_REQUIRE_AUTH", "true")
+
+    # Unauthenticated request must receive 401
+    unauth_resp = client.get("/api/profile")
+    assert unauth_resp.status_code == 401
+    assert unauth_resp.json()["detail"] == "Authentication required"
+
+    # Authenticated request succeeds
+    auth_resp = client.get("/api/profile", headers={"Authorization": "Bearer 1"})
+    assert auth_resp.status_code == 200

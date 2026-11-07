@@ -206,9 +206,19 @@ export interface CoverLetterSpecPayload {
   filename_title?: string;
 }
 
+function getAuthHeaders(): Record<string, string> {
+  if (typeof localStorage === "undefined") return {};
+  const token = localStorage.getItem("careerforge_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+      ...(init?.headers ?? {}),
+    },
     ...init,
   });
   if (!res.ok) {
@@ -228,6 +238,18 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  setAuthToken: (token: string | null) => {
+    if (typeof localStorage === "undefined") return;
+    if (token) {
+      localStorage.setItem("careerforge_token", token);
+    } else {
+      localStorage.removeItem("careerforge_token");
+    }
+  },
+  getAuthToken: (): string | null => {
+    if (typeof localStorage === "undefined") return null;
+    return localStorage.getItem("careerforge_token");
+  },
   getHealth: () => request<HealthStatus>("/api/health"),
   getProfile: () => request<MasterProfile>("/api/profile"),
   updateProfile: (data: ProfileUpdatePayload) =>
@@ -258,6 +280,7 @@ export const api = {
     formData.append("file", file);
     const res = await fetch("/api/profile/upload", {
       method: "POST",
+      headers: { ...getAuthHeaders() },
       body: formData,
     });
     if (!res.ok) {
@@ -289,7 +312,7 @@ export const api = {
   ): Promise<{ blob: Blob; filename: string }> => {
     const res = await fetch(`/api/compiler/export?format=${format}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({ ...spec, format }),
     });
     if (!res.ok) {
@@ -362,7 +385,7 @@ export const api = {
   ): Promise<{ blob: Blob; filename: string }> => {
     const res = await fetch(`/api/compiler/cover-letter/export?format=${format}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({ ...spec, format }),
     });
     if (!res.ok) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, HealthStatus, JobPostingItem, SystemSettings } from "./api";
 import { JobRadar } from "./components/JobRadar";
 import { MasterProfileHub } from "./components/MasterProfileHub";
@@ -6,20 +6,25 @@ import { GeneralResumeBuilder } from "./components/GeneralResumeBuilder";
 import { SettingsModal } from "./components/SettingsModal";
 import { TailoringStudio } from "./components/TailoringStudio";
 import { useAppStore } from "./store";
+import { AppLanguage, useTranslation } from "./i18n";
 
 type ActiveTab = "radar" | "studio" | "profile" | "compiler" | "status";
 
 export function App() {
+  const { language, setLanguage, t } = useTranslation();
   const [activeTab, setActiveTab] = useState<ActiveTab>("radar");
   const selectedJob = useAppStore((s) => s.selectedJob);
   const setSelectedJob = useAppStore((s) => s.setSelectedJob);
   const settings = useAppStore((s) => s.settings);
   const setSettings = useAppStore((s) => s.setSettings);
   const fetchSettings = useAppStore((s) => s.fetchSettings);
+  const radarLogs = useAppStore((s) => s.radarLogs);
+  const clearRadarLogs = useAppStore((s) => s.clearRadarLogs);
 
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const runtimeLogContainerRef = useRef<HTMLDivElement | null>(null);
   const [toast, setToast] = useState<{
     type: "success" | "error";
     message: string;
@@ -40,6 +45,13 @@ export function App() {
 
     void fetchSettings();
   }, [fetchSettings]);
+
+  useEffect(() => {
+    if (activeTab === "status" && runtimeLogContainerRef.current) {
+      runtimeLogContainerRef.current.scrollTop =
+        runtimeLogContainerRef.current.scrollHeight;
+    }
+  }, [radarLogs, activeTab]);
 
   const isProviderConfigured = (s: SystemSettings | null): boolean => {
     if (!s) return false;
@@ -80,7 +92,7 @@ export function App() {
               onClick={() => setActiveTab("radar")}
               aria-current={activeTab === "radar" ? "page" : undefined}
             >
-              Job Radar
+              {t("nav.jobRadar")}
             </button>
             <button
               type="button"
@@ -90,7 +102,7 @@ export function App() {
               onClick={() => setActiveTab("studio")}
               aria-current={activeTab === "studio" ? "page" : undefined}
             >
-              Tailoring Studio
+              {t("nav.tailoringStudio")}
             </button>
             <button
               type="button"
@@ -100,7 +112,7 @@ export function App() {
               onClick={() => setActiveTab("profile")}
               aria-current={activeTab === "profile" ? "page" : undefined}
             >
-              Master Profile
+              {t("nav.masterProfile")}
             </button>
             <button
               type="button"
@@ -110,7 +122,7 @@ export function App() {
               onClick={() => setActiveTab("compiler")}
               aria-current={activeTab === "compiler" ? "page" : undefined}
             >
-              General Resume Builder
+              {t("nav.resumeBuilder")}
             </button>
             <button
               type="button"
@@ -120,12 +132,34 @@ export function App() {
               onClick={() => setActiveTab("status")}
               aria-current={activeTab === "status" ? "page" : undefined}
             >
-              Runtime Status
+              {t("nav.runtimeStatus")}
             </button>
           </nav>
         </div>
 
         <div className="topbar-actions">
+          <div className="status-pill" title={t("topbar.language")}>
+            <span style={{ fontSize: "0.75rem", fontWeight: 600 }}>
+              {language === "pt-BR" ? "PT" : "EN"}
+            </span>
+            <select
+              aria-label={t("topbar.language")}
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as AppLanguage)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "inherit",
+                fontSize: "0.8125rem",
+                cursor: "pointer",
+                outline: "none",
+              }}
+            >
+              <option value="en" style={{ color: "var(--ink-primary)", backgroundColor: "var(--bg-elevated)" }}>EN</option>
+              <option value="pt-BR" style={{ color: "var(--ink-primary)", backgroundColor: "var(--bg-elevated)" }}>PT-BR</option>
+            </select>
+          </div>
+
           <div
             className="status-pill"
             title={
@@ -159,10 +193,10 @@ export function App() {
             />
             <span>
               {health?.status === "healthy"
-                ? `API v${health.version}`
+                ? t("topbar.apiOnline", { version: health.version })
                 : healthError
-                  ? "API Offline"
-                  : "Connecting..."}
+                  ? t("topbar.apiOffline")
+                  : t("topbar.apiConnecting")}
             </span>
           </div>
 
@@ -171,7 +205,7 @@ export function App() {
             className="btn"
             onClick={() => setSettingsOpen(true)}
           >
-            Settings
+            {t("topbar.settings")}
           </button>
         </div>
       </header>
@@ -258,7 +292,7 @@ export function App() {
           <section className="panel" aria-labelledby="runtime-status-heading">
             <div className="panel-header">
               <h1 id="runtime-status-heading" className="panel-title">
-                Monolith Runtime & Provider Status
+                {t("runtime.panelTitle")}
               </h1>
             </div>
             {health && (
@@ -272,28 +306,30 @@ export function App() {
               >
                 <div>
                   <strong style={{ color: "var(--ink-primary)" }}>
-                    Service:
+                    {t("common.service")}:
                   </strong>{" "}
                   {health.app}
                 </div>
                 <div>
                   <strong style={{ color: "var(--ink-primary)" }}>
-                    Status:
+                    {t("common.status")}:
                   </strong>{" "}
                   {health.status}
                 </div>
                 <div>
                   <strong style={{ color: "var(--ink-primary)" }}>
-                    Version:
+                    {t("common.version")}:
                   </strong>{" "}
                   {health.version}
                 </div>
                 <div>
                   <strong style={{ color: "var(--ink-primary)" }}>
-                    Active LLM Provider:
+                    {t("common.activeLlm")}:
                   </strong>{" "}
                   {providerLabel} (
-                  {providerReady ? "Configured" : "Awaiting API Key"})
+                  {providerReady
+                    ? t("common.configured")
+                    : t("common.awaitingKey")})
                 </div>
               </div>
             )}
@@ -302,6 +338,74 @@ export function App() {
                 Failed to connect to backend: {healthError}
               </p>
             )}
+          </section>
+
+          <section
+            className="panel"
+            aria-labelledby="runtime-logs-heading"
+            style={{ marginTop: "1.5rem" }}
+          >
+            <div
+              className="panel-header"
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.6rem",
+                }}
+              >
+                <h2 id="runtime-logs-heading" className="panel-title">
+                  {t("runtime.scraperLogsTitle")}
+                </h2>
+                <span className="status-pill" style={{ fontSize: "0.75rem" }}>
+                  {radarLogs.length}{" "}
+                  {language === "pt-BR" ? "eventos" : "events"}
+                </span>
+              </div>
+              {radarLogs.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={clearRadarLogs}
+                >
+                  {t("runtime.clearLogs")}
+                </button>
+              )}
+            </div>
+
+            <div
+              ref={runtimeLogContainerRef}
+              className="console-body"
+              role="log"
+              aria-live="polite"
+              style={{
+                height: "280px",
+                backgroundColor: "oklch(0.12 0.012 255)",
+                borderRadius: "8px",
+                border: "1px solid var(--border-subtle)",
+              }}
+            >
+              {radarLogs.length === 0 ? (
+                <div className="console-line muted">
+                  {t("runtime.noLogs")}
+                </div>
+              ) : (
+                radarLogs.map((entry, idx) => (
+                  <div key={idx} className="console-line">
+                    <span className="console-progress">
+                      [{String(entry.progress ?? 0).padStart(3, " ")}%]
+                    </span>{" "}
+                    <span>{entry.message}</span>
+                  </div>
+                ))
+              )}
+            </div>
           </section>
         </div>
       </main>

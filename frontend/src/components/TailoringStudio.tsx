@@ -610,53 +610,149 @@ export function TailoringStudio({
           </div>
 
           {selectedJob ? (
-            <>
-              <div className="studio-job-summary">
-                <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
-                  {selectedJob.title}
-                </div>
-                <div
-                  style={{
-                    fontSize: "0.825rem",
-                    color: "var(--ink-secondary)",
-                  }}
-                >
-                  {selectedJob.company} •{" "}
-                  {selectedJob.location || "Remote / Flexible"}
-                </div>
-              </div>
+            (() => {
+              const jobText =
+                selectedJob.cleaned_text || selectedJob.raw_description || "";
+              const wordCount = jobText.trim()
+                ? jobText.trim().split(/\s+/).length
+                : 0;
+              const isShort = wordCount > 0 && wordCount < 50;
 
-              <div className="field">
-                <span className="field-label">
-                  Grounded ATS Keywords ({atsKeywords.length})
-                </span>
-                <div className="tag-list" aria-label="Extracted ATS keywords">
-                  {atsKeywords.length === 0 ? (
-                    <span
+              return (
+                <>
+                  <div className="studio-job-summary">
+                    <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
+                      {selectedJob.title}
+                    </div>
+                    <div
                       style={{
-                        fontSize: "0.8rem",
-                        color: "var(--ink-placeholder)",
+                        fontSize: "0.825rem",
+                        color: "var(--ink-secondary)",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "0.4rem",
+                        alignItems: "center",
+                        marginTop: "0.2rem",
                       }}
                     >
-                      Click &quot;Tailor with AI&quot; to extract keywords.
-                    </span>
-                  ) : (
-                    atsKeywords.map((kw) => (
-                      <span key={kw} className="tag-chip">
-                        {kw}
+                      <span>{selectedJob.company}</span>
+                      <span>•</span>
+                      <span>{selectedJob.location || "Remote / Flexible"}</span>
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "0.35rem",
+                        alignItems: "center",
+                        marginTop: "0.5rem",
+                      }}
+                    >
+                      <span
+                        className="status-pill"
+                        style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem" }}
+                      >
+                        Modalidade: {selectedJob.remote_type || "Não especificada"}
                       </span>
-                    ))
-                  )}
-                </div>
-              </div>
+                      <span
+                        className="status-pill"
+                        style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem" }}
+                      >
+                        Status: {selectedJob.status}
+                      </span>
+                      <span
+                        className="status-pill"
+                        style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem" }}
+                      >
+                        {selectedJob.platform.toUpperCase()}
+                      </span>
+                      {isShort && (
+                        <span
+                          className="status-pill"
+                          style={{
+                            fontSize: "0.75rem",
+                            padding: "0.15rem 0.5rem",
+                            borderColor: "var(--warning)",
+                            color: "var(--warning)",
+                          }}
+                        >
+                          Descrição curta ({wordCount} palavras)
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
-              <div className="field" style={{ flex: 1 }}>
-                <span className="field-label">Job Description</span>
-                <div className="studio-job-scroll">
-                  {selectedJob.cleaned_text || selectedJob.raw_description}
-                </div>
-              </div>
-            </>
+                  <div className="field">
+                    <span className="field-label">
+                      Grounded ATS Keywords ({atsKeywords.length})
+                    </span>
+                    <div className="tag-list" aria-label="Extracted ATS keywords">
+                      {atsKeywords.length === 0 ? (
+                        <span
+                          style={{
+                            fontSize: "0.8rem",
+                            color: "var(--ink-placeholder)",
+                          }}
+                        >
+                          Click &quot;Tailor with AI&quot; to extract keywords.
+                        </span>
+                      ) : (
+                        atsKeywords.map((kw) => (
+                          <span key={kw} className="tag-chip">
+                            {kw}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    className="field"
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      minHeight: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: "0.35rem",
+                      }}
+                    >
+                      <span className="field-label" style={{ marginBottom: 0 }}>
+                        Job Description
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "0.75rem",
+                          color: "var(--ink-secondary)",
+                        }}
+                      >
+                        {wordCount} palavras
+                      </span>
+                    </div>
+                    <div
+                      className="studio-job-scroll"
+                      tabIndex={0}
+                      role="region"
+                      aria-label="Full job description"
+                      style={{
+                        wordBreak: "break-word",
+                        overflowY: "auto",
+                        maxHeight: "460px",
+                        minHeight: "220px",
+                      }}
+                    >
+                      {jobText || "No job description available."}
+                    </div>
+                  </div>
+                </>
+              );
+            })()
           ) : (
             <p style={{ color: "var(--ink-secondary)", fontSize: "0.875rem" }}>
               Select a scraped job from Job Radar or use the dropdown above to
