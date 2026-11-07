@@ -11,12 +11,10 @@ from backend.app.schemas.profile import (
     ExperienceCreate,
     ExperienceRead,
     ExperienceUpdate,
-    LegacyImportResponse,
     ProfileRead,
     ProfileUpdate,
 )
 from backend.app.services.document_parser import extract_text_from_file
-from backend.app.services.legacy_importer import import_legacy_data
 from backend.app.services.llm_orchestrator import LLMProviderError
 from backend.app.services.profile_ingestion import parse_resume_text, persist_profile_ingestion
 
@@ -173,13 +171,6 @@ def delete_experience(experience_id: int, session: DBSession, current_user: Curr
     session.delete(exp)
     session.commit()
     return None
-
-
-@router.post("/import-legacy", response_model=LegacyImportResponse)
-def import_legacy_profile(session: DBSession, current_user: CurrentUser) -> LegacyImportResponse:
-    profile = get_or_create_user_profile(session, current_user)
-    result = import_legacy_data(session, profile)
-    return LegacyImportResponse(**result)
 
 
 @router.post("/upload", response_model=ProfileRead)

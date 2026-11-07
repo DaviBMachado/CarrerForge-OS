@@ -69,11 +69,3 @@ class ProfileRead(BaseModel):
     skills_json: Any | None = None
     languages_json: Any | None = None
     experiences: list[ExperienceRead] = Field(default_factory=list)
-
-
-class LegacyImportResponse(BaseModel):
-    status: str
-    profile_id: int
-    experiences_count: int
-    specs_scanned: int
-    total_bullets: int

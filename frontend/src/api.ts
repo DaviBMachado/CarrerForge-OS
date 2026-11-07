@@ -59,14 +59,6 @@ export interface ProfileUpdatePayload {
   languages_json?: string[] | null;
 }
 
-export interface LegacyImportResult {
-  status: string;
-  profile_id: number;
-  experiences_count: number;
-  specs_scanned: number;
-  total_bullets: number;
-}
-
 export interface SystemSettings {
   active_provider: LLMProvider;
   gemini_api_key: string | null;
@@ -270,10 +262,6 @@ export const api = {
   deleteExperience: (id: number) =>
     request<void>(`/api/profile/experiences/${id}`, {
       method: "DELETE",
-    }),
-  importLegacyProfile: () =>
-    request<LegacyImportResult>("/api/profile/import-legacy", {
-      method: "POST",
     }),
   uploadResume: async (file: File): Promise<MasterProfile> => {
     const formData = new FormData();

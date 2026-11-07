@@ -45,7 +45,6 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
   const [profile, setProfile] = useState<MasterProfile | null>(null);
   const [loading, setLoading] = useState(!useAppStore.getState().profileLoaded);
   const [savingProfile, setSavingProfile] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [uploadingResume, setUploadingResume] = useState(false);
   const [isDraggingResume, setIsDraggingResume] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -146,26 +145,6 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
       );
     } finally {
       setSavingProfile(false);
-    }
-  };
-
-  const handleImportLegacy = async () => {
-    setImporting(true);
-    try {
-      const res = await api.importLegacyProfile();
-      const fresh = await api.getProfile();
-      hydrateFromProfile(fresh);
-      onNotify(
-        "success",
-        `Imported ${res.experiences_count} roles and ${res.total_bullets} tagged bullets.`
-      );
-    } catch (err) {
-      onNotify(
-        "error",
-        err instanceof Error ? err.message : "Legacy import failed"
-      );
-    } finally {
-      setImporting(false);
     }
   };
 
@@ -423,14 +402,6 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
         </div>
 
         <div className="hub-actions">
-          <button
-            type="button"
-            className="btn"
-            onClick={handleImportLegacy}
-            disabled={importing || uploadingResume}
-          >
-            {importing ? "Importing..." : "Import Legacy Resume"}
-          </button>
           <button
             type="button"
             className="btn btn-primary"
