@@ -40,8 +40,8 @@ def test_get_initial_profile(client: TestClient):
     response = client.get("/api/profile")
     assert response.status_code == 200
     data = response.json()
-    assert data["full_name"] == "Davi Bernardes Machado"
-    assert data["headline"] == "Engenheiro de Software Backend"
+    assert data["full_name"] == ""
+    assert data["headline"] is None
     assert "experiences" in data
     assert isinstance(data["experiences"], list)
 

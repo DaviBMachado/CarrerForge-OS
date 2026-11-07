@@ -51,51 +51,18 @@ function profileToInitialSpec(
   profile: MasterProfile | null,
   job: JobPostingItem | null
 ): ResumeSpecPayload {
-  if (!profile) {
+  if (
+    !profile ||
+    (!profile.full_name && (!profile.experiences || profile.experiences.length === 0))
+  ) {
     return {
-      name: "Davi Bernardes Machado",
-      title: "Davi Bernardes Machado - Senior Backend Python Engineer",
-      contact: "davi@careerforge.local | São Paulo, SP | linkedin.com/in/davibernardes",
+      name: "",
+      title: "",
+      contact: "",
       filename_title: job
-        ? `Resume_Davi_Bernardes_${job.company.replace(/\s+/g, "_")}`
-        : "Resume_Davi_Bernardes",
-      sections: [
-        {
-          title: "Professional Summary",
-          blocks: [
-            {
-              type: "paragraph",
-              text: "Backend Python Engineer experienced in FastAPI, distributed APIs, relational databases, and deterministic ATS document pipelines.",
-            },
-          ],
-        },
-        {
-          title: "Technical Skills",
-          blocks: [
-            {
-              type: "skillline",
-              text: "**Backend & Cloud:** Python, FastAPI, PostgreSQL, AWS Lambda, Docker, REST",
-            },
-          ],
-        },
-        {
-          title: "Professional Experience",
-          blocks: [
-            {
-              type: "subheading",
-              text: "Senior Software Engineer | CareerForge Systems (2023 – Present)",
-            },
-            {
-              type: "bullet",
-              text: "Architected high-throughput Python and FastAPI services with strict factual guardrails and sub-second compilation latency.",
-            },
-            {
-              type: "bullet",
-              text: "Automated cloud data workflows and standardized REST API contracts across engineering teams.",
-            },
-          ],
-        },
-      ],
+        ? `Resume_${job.company.replace(/\s+/g, "_")}`
+        : "Resume",
+      sections: [],
     };
   }
 
@@ -104,19 +71,22 @@ function profileToInitialSpec(
     .filter(Boolean)
     .join(" | ");
 
-  const sections: ResumeSection[] = [
-    {
+  const sections: ResumeSection[] = [];
+  if (profile.summary_base || profile.headline) {
+    sections.push({
       title: "Professional Summary",
       blocks: [
         {
           type: "paragraph",
           text:
             profile.summary_base ||
-            `${profile.full_name} — ${profile.headline || "Software Engineer"}`,
+            (profile.headline
+              ? `${profile.full_name} — ${profile.headline}`
+              : profile.full_name),
         },
       ],
-    },
-  ];
+    });
+  }
 
   if (profile.skills_json && Object.keys(profile.skills_json).length > 0) {
     const skillParts = Object.entries(profile.skills_json)
@@ -149,13 +119,18 @@ function profileToInitialSpec(
     sections.push({ title: "Professional Experience", blocks: expBlocks });
   }
 
+  const name = profile.full_name || "";
+  const title = profile.headline
+    ? (name ? `${name} - ${profile.headline}` : profile.headline)
+    : name;
+
   return {
-    name: profile.full_name || "Candidate",
-    title: `${profile.full_name || "Candidate"} - ${profile.headline || "Software Engineer"}`,
+    name,
+    title,
     contact: contactLine,
     filename_title: job
-      ? `Resume_${(profile.full_name || "Candidate").replace(/\s+/g, "_")}_${job.company.replace(/\s+/g, "_")}`
-      : "Resume",
+      ? `Resume_${name ? `${name.replace(/\s+/g, "_")}_` : ""}${job.company.replace(/\s+/g, "_")}`
+      : name ? `Resume_${name.replace(/\s+/g, "_")}` : "Resume",
     sections,
   };
 }
@@ -179,10 +154,10 @@ function deriveLocalKeywords(
   const lowerJob = (jobText || "").toLowerCase();
   const jobMatches = KNOWN_KEYWORDS.filter((kw) => lowerJob.includes(kw));
   if (jobMatches.length === 0) {
-    return { keywords: ["python", "fastapi", "postgresql", "aws"], matchPct: 100 };
+    return { keywords: [], matchPct: 0 };
   }
   if (!profile) {
-    return { keywords: jobMatches, matchPct: 85 };
+    return { keywords: jobMatches, matchPct: 0 };
   }
   const profileBlob = JSON.stringify(profile).toLowerCase();
   const grounded = jobMatches.filter((kw) => profileBlob.includes(kw));
@@ -201,17 +176,15 @@ export function TailoringStudio({
   const fetchProfile = useAppStore((s) => s.fetchProfile);
   const [activeTab, setActiveTab] = useState<StudioTab>("resume");
 
-  const [persona, setPersona] = useState<string>("Backend Python Engineer");
+  const [persona, setPersona] = useState<string>(() => profile?.headline || "");
   const [language, setLanguage] = useState<string>("en");
   const [atsKeywords, setAtsKeywords] = useState<string[]>([]);
   const [matchPercentage, setMatchPercentage] = useState<number>(0);
 
   const [resumeSpec, setResumeSpec] = useState<ResumeSpecPayload>(() =>
-    profileToInitialSpec(null, selectedJob)
+    profileToInitialSpec(profile, selectedJob)
   );
-  const [coverLetter, setCoverLetter] = useState<string>(
-    "Dear Hiring Team,\n\nI am writing to express my strong interest in this position. My background in Python, FastAPI, and cloud architecture aligns directly with your technical requirements.\n\nIn my recent engineering roles, I built high-reliability backend services and automated data workflows with measurable latency and throughput improvements.\n\nThank you for your time and consideration. I look forward to discussing how my experience can contribute to your engineering organization."
-  );
+  const [coverLetter, setCoverLetter] = useState<string>("");
 
   const [rundown, setRundown] = useState<GupyRundown | null>(null);
   const [questionInput, setQuestionInput] = useState<string>("");
@@ -239,12 +212,19 @@ export function TailoringStudio({
       if (initialJob && !selectedJob) {
         onSelectJob(initialJob);
       }
-      if (loadedProfile) {
-        setResumeSpec((prev) =>
-          prev.name
-            ? prev
-            : profileToInitialSpec(loadedProfile, initialJob)
-        );
+      if (
+        loadedProfile &&
+        (loadedProfile.full_name ||
+          (loadedProfile.experiences && loadedProfile.experiences.length > 0))
+      ) {
+        setResumeSpec((prev) => {
+          const isClean =
+            !prev.name && (!prev.sections || prev.sections.length === 0);
+          return isClean
+            ? profileToInitialSpec(loadedProfile, initialJob)
+            : prev;
+        });
+        setPersona((prev) => prev || loadedProfile.headline || "");
       }
     });
   }, []);
@@ -276,6 +256,17 @@ export function TailoringStudio({
     setCompiling(true);
 
     const timer = window.setTimeout(() => {
+      const isSpecEmpty =
+        !resumeSpec.name &&
+        !resumeSpec.title &&
+        (!resumeSpec.sections || resumeSpec.sections.length === 0);
+
+      if (isSpecEmpty) {
+        setPreview(null);
+        setCompiling(false);
+        return;
+      }
+
       api
         .previewResume(resumeSpec)
         .then((res) => {
@@ -476,7 +467,7 @@ export function TailoringStudio({
     try {
       const { blob, filename } = await api.exportCoverLetter(
         {
-          name: resumeSpec.name || "Candidate",
+          name: resumeSpec.name || "",
           title: resumeSpec.title || "Cover Letter",
           contact: resumeSpec.contact || "",
           recipient: selectedJob
@@ -856,7 +847,23 @@ export function TailoringStudio({
               </div>
 
               <div className="studio-sections-scroll">
-                {resumeSpec.sections.map((sec, sIdx) => (
+                {resumeSpec.sections.length === 0 ? (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: "2.5rem 1rem",
+                      color: "var(--ink-secondary)",
+                    }}
+                  >
+                    <p style={{ margin: "0 0 0.5rem 0", fontWeight: 600 }}>
+                      No resume content yet
+                    </p>
+                    <p style={{ margin: 0, fontSize: "0.85rem" }}>
+                      Configure your Master Profile or click &quot;✨ Tailor with AI&quot; to generate your customized resume.
+                    </p>
+                  </div>
+                ) : (
+                  resumeSpec.sections.map((sec, sIdx) => (
                   <div key={`${sec.title}-${sIdx}`} className="skill-category">
                     <div className="skill-category-header">
                       <strong style={{ fontSize: "0.9rem" }}>{sec.title}</strong>
@@ -920,7 +927,7 @@ export function TailoringStudio({
                       ))}
                     </div>
                   </div>
-                ))}
+                )))}
               </div>
             </div>
           )}
@@ -984,6 +991,7 @@ export function TailoringStudio({
                 id="cover-letter-textarea"
                 aria-label="Cover Letter Editor"
                 className="textarea"
+                placeholder="Click '✨ Tailor with AI' to generate a tailored cover letter, or write one here..."
                 style={{ minHeight: "480px", lineHeight: 1.6 }}
                 value={coverLetter}
                 onChange={(e) => setCoverLetter(e.target.value)}
@@ -1353,10 +1361,16 @@ export function TailoringStudio({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: "var(--bg-base)",
+                color: "var(--ink-secondary)",
+                textAlign: "center",
+                padding: "2rem",
               }}
             >
-              <p>Generating PDF preview...</p>
+              <p>
+                {compiling
+                  ? "Generating PDF preview..."
+                  : "Nenhum conteúdo de currículo para exibir na prévia."}
+              </p>
             </div>
           )}
         </aside>

@@ -31,8 +31,8 @@ def get_or_create_user_profile(session: Session, user: User) -> MasterProfile:
     if not profile:
         profile = MasterProfile(
             user_id=user.id,
-            full_name="Davi Bernardes Machado",
-            headline="Engenheiro de Software Backend",
+            full_name="",
+            headline=None,
         )
         session.add(profile)
         session.commit()

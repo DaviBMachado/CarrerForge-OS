@@ -130,7 +130,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
     setSavingProfile(true);
     try {
       const updated = await api.updateProfile({
-        full_name: fullName.trim() || "Candidate",
+        full_name: fullName.trim(),
         headline: headline.trim() || null,
         summary_base: summaryBase.trim() || null,
         contact_json: contact,
@@ -585,7 +585,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                 className="input"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="Davi Bernardes Machado"
+                placeholder="ex: Jane Doe"
               />
             </div>
 

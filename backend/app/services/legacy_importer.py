@@ -236,8 +236,8 @@ def _finalize_experience_bullets(exp: dict[str, Any]) -> None:
 
 def parse_markdown_resume(md_content: str) -> dict[str, Any]:
     data: dict[str, Any] = {
-        "full_name": "Davi Bernardes Machado",
-        "headline": "Engenheiro de Software Backend | Python, AWS, IA Generativa",
+        "full_name": "",
+        "headline": "",
         "contact_json": {},
         "summary_base": "",
         "skills_json": {},

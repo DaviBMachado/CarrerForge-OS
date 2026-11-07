@@ -13,26 +13,6 @@ export interface GeneralResumeBuilderProps {
   onNotify: (type: "success" | "error", message: string) => void;
 }
 
-export const DEFAULT_SAMPLE_TEXT = `# Davi Bernardes Machado
-Senior Backend Engineer | Python, FastAPI & Distributed Systems
-davi@careerforge.local | +55 (11) 99999-9999 | São Paulo, SP | linkedin.com/in/davibernardes
-
-## Executive Summary
-Backend engineer experienced in high-throughput APIs, relational data modeling, and deterministic document pipelines. Focused on clean architecture, low-latency microservices, and ATS-compliant automation.
-
-## Core Technical Skills
-**Languages:** Python, TypeScript, SQL, Go || **Frameworks:** FastAPI, React, SQLModel, Pydantic || **Infrastructure:** Docker, PostgreSQL, SQLite, Linux
-
-## Professional Experience
-### Senior Software Engineer — CareerForge Systems (2023 – Present)
-- Architected a stateless PDF and DOCX compilation engine using ReportLab and python-docx with bundled TrueType fonts.
-- Reduced document rendering latency by 65% by moving binary generation to in-memory streams with zero disk leaks.
-- Designed a 2-page budget enforcement system that alerts candidates before ATS truncation occurs.
-
-### Backend Developer — Horizon Data Corp (2020 – 2023)
-- Built asynchronous ingestion pipelines processing 2M+ daily events using Python and PostgreSQL.
-- Standardized REST API contracts and automated OpenAPI schema verification in CI/CD.`;
-
 export const OVERFLOW_PARAGRAPH = `
 ### Principal Platform Architect — Global Scale Enterprise (2016 – 2020)
 - Led a cross-functional engineering organization of 45 developers delivering mission-critical financial clearing systems across 12 regions.
@@ -95,17 +75,19 @@ export function parseTextToSpec(raw: string): ResumeSpecPayload {
   }
 
   return {
-    name: name || "Candidate",
-    title: name ? `${name}${title ? ` - ${title}` : ""}` : title || "Resume",
+    name,
+    title: name ? `${name}${title ? ` - ${title}` : ""}` : title,
     contact: contactLines,
-    filename_title: name || "Resume",
+    filename_title: name ? `Resume_${name.replace(/\s+/g, "_")}` : "Resume",
     sections,
   };
 }
 
 export function profileToText(profile: MasterProfile): string {
   const out: string[] = [];
-  out.push(`# ${profile.full_name || "Candidate"}`);
+  if (profile.full_name) {
+    out.push(`# ${profile.full_name}`);
+  }
   if (profile.headline) out.push(profile.headline);
 
   const c = profile.contact_json || {};
@@ -249,7 +231,7 @@ export function GeneralResumeBuilder({ onNotify }: GeneralResumeBuilderProps) {
     ) {
       return profileToText(profile);
     }
-    return DEFAULT_SAMPLE_TEXT;
+    return "";
   });
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -269,9 +251,7 @@ export function GeneralResumeBuilder({ onNotify }: GeneralResumeBuilderProps) {
         data &&
         (data.full_name || (data.experiences && data.experiences.length > 0))
       ) {
-        setEditorText((prev) =>
-          prev === DEFAULT_SAMPLE_TEXT ? profileToText(data) : prev
-        );
+        setEditorText((prev) => (prev.trim() === "" ? profileToText(data) : prev));
       }
     });
     return () => {
@@ -287,6 +267,12 @@ export function GeneralResumeBuilder({ onNotify }: GeneralResumeBuilderProps) {
     setCompiling(true);
 
     const timer = window.setTimeout(() => {
+      if (!editorText.trim()) {
+        setPreview(null);
+        setCompiling(false);
+        return;
+      }
+
       api
         .previewResume(parseTextToSpec(editorText))
         .then((res) => {
@@ -531,7 +517,7 @@ export function GeneralResumeBuilder({ onNotify }: GeneralResumeBuilderProps) {
                   setEditorText(
                     profile && (profile.full_name || profile.experiences?.length)
                       ? profileToText(profile)
-                      : DEFAULT_SAMPLE_TEXT
+                      : ""
                   )
                 }
               >
@@ -556,7 +542,7 @@ export function GeneralResumeBuilder({ onNotify }: GeneralResumeBuilderProps) {
               }}
               value={editorText}
               onChange={(e) => setEditorText(e.target.value)}
-              placeholder="Enter resume content..."
+              placeholder="Enter resume content or load from Master Profile..."
             />
           </div>
         </section>
@@ -623,10 +609,16 @@ export function GeneralResumeBuilder({ onNotify }: GeneralResumeBuilderProps) {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: "var(--bg-base)",
+                color: "var(--ink-secondary)",
+                textAlign: "center",
+                padding: "2rem",
               }}
             >
-              <p>Generating PDF preview...</p>
+              <p>
+                {compiling
+                  ? "Generating PDF preview..."
+                  : "Type or load resume content to display the live PDF preview."}
+              </p>
             </div>
           )}
         </section>
