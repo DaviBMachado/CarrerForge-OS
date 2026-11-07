@@ -298,19 +298,29 @@ class LLMOrchestrator:
         session: Session,
         http_client: httpx.Client | None = None,
         timeout: float = 90.0,
+        user_id: int = 1,
     ) -> None:
         self.session = session
         self._http_client = http_client
         self._timeout = timeout
+        self.user_id = user_id
 
     def get_active_provider(self) -> LLMProvider:
-        raw = get_raw_setting(self.session, SETTING_KEYS["active_provider"], "gemini") or "gemini"
+        raw = (
+            get_raw_setting(
+                self.session,
+                SETTING_KEYS["active_provider"],
+                "gemini",
+                user_id=self.user_id,
+            )
+            or "gemini"
+        )
         if raw in ("gemini", "openai", "claude", "ollama"):
             return raw  # type: ignore[return-value]
         return "gemini"
 
     def _require_key(self, setting_attr: str, provider_label: str) -> str:
-        key = get_raw_setting(self.session, SETTING_KEYS[setting_attr])
+        key = get_raw_setting(self.session, SETTING_KEYS[setting_attr], user_id=self.user_id)
         if not key or not key.strip():
             raise LLMConfigurationError(
                 f"Missing API key for provider '{provider_label}'. Configure it in Settings."
@@ -407,6 +417,7 @@ class LLMOrchestrator:
                         self.session,
                         SETTING_KEYS["ollama_base_url"],
                         "http://localhost:11434",
+                        user_id=self.user_id,
                     )
                     or "http://localhost:11434"
                 )

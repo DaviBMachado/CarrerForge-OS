@@ -28,8 +28,8 @@ router = APIRouter(prefix="/tailor", tags=["tailor"])
 DBSession = Annotated[Session, Depends(get_db)]
 
 
-def get_llm_orchestrator(session: DBSession) -> LLMOrchestrator:
-    return LLMOrchestrator(session)
+def get_llm_orchestrator(session: DBSession, current_user: CurrentUser) -> LLMOrchestrator:
+    return LLMOrchestrator(session, user_id=current_user.id)
 
 
 LLMClient = Annotated[LLMOrchestrator, Depends(get_llm_orchestrator)]

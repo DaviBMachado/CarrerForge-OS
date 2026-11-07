@@ -93,6 +93,7 @@ async def session_close() -> dict[str, Any]:
 
 @router.post("/start")
 async def start_scraper(
+    current_user: CurrentUser,
     payload: ScraperStartRequest | None = None,
     query: str | None = None,
     location: str | None = None,
@@ -106,6 +107,7 @@ async def start_scraper(
         platforms=req.platforms,
         remote=remote if remote is not None else req.remote,
         max_jobs=max_jobs if max_jobs is not None else req.max_jobs,
+        user_id=current_user.id,
     )
     return {"run_id": run.run_id}
 

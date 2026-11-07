@@ -8,7 +8,6 @@ from typing import Any
 from sqlmodel import Session
 
 from backend.app.db import engine
-from backend.app.routers.profile import get_or_create_default_profile
 from backend.app.services.scrapers.base import ScrapedJob
 from backend.app.services.scrapers.deduplicator import upsert_scraped_jobs
 from backend.app.services.scrapers.gupy import DEFAULT_BATCH_CAP, scrape_gupy_jobs
@@ -90,6 +89,7 @@ async def _execute_run(
     platforms: list[str],
     remote: bool,
     max_jobs: int,
+    user_id: int = 1,
 ) -> None:
     try:
         await _emit(run, f"Starting scraper for '{query}'...", progress=5, status="running")
@@ -138,8 +138,7 @@ async def _execute_run(
         saved_count = 0
         if all_scraped:
             with Session(engine) as session:
-                profile = get_or_create_default_profile(session)
-                saved = upsert_scraped_jobs(session, profile.user_id, all_scraped)
+                saved = upsert_scraped_jobs(session, user_id, all_scraped)
                 saved_count = len(saved)
 
         await _emit(
@@ -167,6 +166,7 @@ async def start_scraper_run(
     platforms: list[str] | None = None,
     remote: bool = False,
     max_jobs: int = DEFAULT_BATCH_CAP,
+    user_id: int = 1,
 ) -> ScraperRun:
     run_id = uuid.uuid4().hex
     run = ScraperRun(run_id=run_id)
@@ -179,6 +179,7 @@ async def start_scraper_run(
             platforms=platforms or ["linkedin", "gupy"],
             remote=remote,
             max_jobs=max_jobs,
+            user_id=user_id,
         )
     )
     return run

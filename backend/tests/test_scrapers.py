@@ -416,3 +416,64 @@ def test_scraper_jobs_list_and_archive_status_update():
         )
         assert patch_resp.status_code == 200
         assert patch_resp.json()["status"] == "archived"
+
+
+def test_scraper_tenant_isolation_and_ownership():
+    with TestClient(app) as client:
+        suffix = uuid.uuid4().hex[:8]
+        ext_id = f"gupy-tenant2-{suffix}"
+        fake_job = ScrapedJob(
+            platform="gupy",
+            external_id=ext_id,
+            title=f"Tenant2 Engineer {suffix}",
+            company="MultiTenant Corp",
+            location="Remote",
+            description="Tenant isolation check",
+            url="https://tenant.gupy.io/jobs/2",
+        )
+
+        async def fake_gupy_scrape(**kwargs):
+            return [fake_job]
+
+        with (
+            patch(
+                "backend.app.services.scrapers.runner.scrape_gupy_jobs",
+                side_effect=fake_gupy_scrape,
+            ),
+            patch(
+                "backend.app.services.scrapers.runner.scrape_linkedin_jobs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            # User 2 initiates scraper run
+            start_resp = client.post(
+                "/api/scraper/start",
+                headers={"X-User-Id": "2"},
+                json={"query": "Tenant2", "platforms": ["gupy"]},
+            )
+            assert start_resp.status_code == 200
+            run_id = start_resp.json()["run_id"]
+            client.get(f"/api/scraper/stream/{run_id}")
+
+        # User 2 lists jobs: must contain the scraped job
+        resp_u2 = client.get("/api/scraper/jobs", headers={"X-User-Id": "2"})
+        assert resp_u2.status_code == 200
+        jobs_u2 = resp_u2.json()
+        target_u2 = next((j for j in jobs_u2 if j["external_id"] == ext_id), None)
+        assert target_u2 is not None
+        assert target_u2["user_id"] == 2
+
+        # User 1 (or default user) lists jobs: must NOT contain user 2's job
+        resp_u1 = client.get("/api/scraper/jobs", headers={"X-User-Id": "1"})
+        assert resp_u1.status_code == 200
+        jobs_u1 = resp_u1.json()
+        assert not any(j["external_id"] == ext_id for j in jobs_u1)
+
+        # User 1 attempts to update User 2's job: returns 404
+        patch_resp = client.patch(
+            f"/api/scraper/jobs/{target_u2['id']}/status",
+            headers={"X-User-Id": "1"},
+            json={"status": "archived"},
+        )
+        assert patch_resp.status_code == 404
