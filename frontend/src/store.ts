@@ -107,7 +107,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     const currentSeq = ++fetchSeq;
-    const fetchPromise = (async () => {
+    let fetchPromise: Promise<MasterProfile> | null = null;
+    fetchPromise = (async () => {
       try {
         const data = await api.getProfile();
         if (currentSeq === fetchSeq) {

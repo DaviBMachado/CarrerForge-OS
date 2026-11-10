@@ -18,6 +18,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+from backend.app.logging_config import get_logger
+
+logger = get_logger("careerforge.compiler")
+
 BULLET_CHAR = "\u2022"
 CONTACT_SEP = " | "
 FONT_FAMILY = "Carlito"
@@ -395,6 +399,8 @@ class ResumeCompiler:
 
         buf = io.BytesIO()
         doc.save(buf)
+        doc_name = parsed.filename_title or parsed.name or parsed.title or "Resume"
+        logger.info(f"Compiled DOCX resume '{doc_name}': {len(buf.getvalue())} bytes")
         buf.seek(0)
         return buf
 
@@ -452,6 +458,10 @@ class ResumeCompiler:
 
         doc.build(story)
         page_count = int(getattr(doc, "page", 1))
+        doc_name = parsed.filename_title or author or "Resume"
+        logger.info(
+            f"Compiled PDF resume '{doc_name}': {page_count} page(s) ({len(buf.getvalue())} bytes)"
+        )
         buf.seek(0)
         return buf, page_count
 
@@ -515,6 +525,10 @@ class ResumeCompiler:
                     story.append(Paragraph(escape(line.strip()), styles["paragraph"]))
 
         doc.build(story)
+        page_count = int(getattr(doc, "page", 1))
+        logger.info(
+            f"Compiled PDF cover letter '{display_title}': {page_count} page(s) ({len(buf.getvalue())} bytes)"
+        )
         buf.seek(0)
         return buf
 

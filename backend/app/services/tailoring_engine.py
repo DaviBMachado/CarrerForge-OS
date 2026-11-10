@@ -4,7 +4,10 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError
 from sqlmodel import Session, select
 
+from backend.app.logging_config import get_logger
 from backend.app.models import Experience, JobPosting, MasterProfile, TailoredArtifact
+
+logger = get_logger("careerforge.tailor")
 from backend.app.services.llm_orchestrator import (
     LLMOrchestrator,
     LLMProviderError,
@@ -276,9 +279,9 @@ def verify_factual_guardrails(
                         )
                         and rhs_lower not in corpus
                     ):
-                        raise FactualGuardrailError(
-                            f"Ungrounded company or organization in subheading: '{rhs_clean}'"
-                        )
+                        err_msg = f"Ungrounded company or organization in subheading: '{rhs_clean}'"
+                        logger.warning(f"Factual guardrail violation: {err_msg}")
+                        raise FactualGuardrailError(err_msg)
 
     spec_text = " ".join(spec_chunks).lower()
     spec_tokens = _tokenize_lower(spec_text)
@@ -291,9 +294,11 @@ def verify_factual_guardrails(
 
     if fabricated_techs:
         joined = ", ".join(fabricated_techs)
-        raise FactualGuardrailError(
-            f"Guardrail violation: ungrounded technologies detected in resume: {joined}"
-        )
+        err_msg = f"Guardrail violation: ungrounded technologies detected in resume: {joined}"
+        logger.warning(f"Factual guardrail violation: {err_msg}")
+        raise FactualGuardrailError(err_msg)
+
+    logger.info("Factual guardrail check passed: zero ungrounded technologies or companies detected")
 
 
 def build_tailoring_system_prompt(
@@ -420,6 +425,9 @@ def tailor_job_application(
 ) -> TailoringResult:
     """Run the ATS tailoring & cover letter pipeline and persist TailoredArtifact."""
     assert job.id is not None, "JobPosting must be persisted before tailoring."
+    logger.info(
+        f"Starting tailoring lifecycle for job_id={job.id} ('{job.title}' at '{job.company}')"
+    )
     experiences = list(
         session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
     )
@@ -427,6 +435,10 @@ def tailor_job_application(
     language = detect_language(job_text)
     persona = select_persona(job_text, profile)
     _, grounded_keywords, match_pct = extract_ats_keywords(job_text, profile, experiences)
+    logger.info(
+        f"Tailoring strategy selected: persona='{persona}' language='{language}' "
+        f"keywords_count={len(grounded_keywords)} match_percentage={match_pct}%"
+    )
 
     system_prompt = build_tailoring_system_prompt(language, persona, grounded_keywords)
     user_prompt = (
@@ -446,6 +458,7 @@ def tailor_job_application(
         raise LLMProviderError(f"LLM output did not match ResumeSpec schema: {exc}") from exc
 
     verify_factual_guardrails(resume_spec, profile, experiences)
+    logger.info(f"Factual guardrails passed for job_id={job.id}")
 
     raw_letter = payload.get("cover_letter") or payload.get("cover_letter_text")
     cover_letter_text = _normalize_cover_letter(raw_letter)
@@ -479,7 +492,10 @@ def tailor_job_application(
     session.commit()
     session.refresh(artifact)
     assert artifact.id is not None
-
+    assert job.id is not None
+    logger.info(
+        f"Tailoring lifecycle completed successfully for job_id={job.id} (artifact_id={artifact.id})"
+    )
     return TailoringResult(
         artifact_id=artifact.id,
         job_id=job.id,
@@ -489,6 +505,49 @@ def tailor_job_application(
         match_percentage=match_pct,
         resume_spec=resume_spec,
         cover_letter_text=cover_letter_text,
+    )
+
+
+def get_tailored_artifact(
+    session: Session,
+    job: JobPosting,
+    profile: MasterProfile,
+) -> TailoringResult | None:
+    """Retrieve persisted TailoredArtifact and build TailoringResult without LLM calls."""
+    artifact = session.exec(
+        select(TailoredArtifact).where(TailoredArtifact.job_id == job.id)
+    ).first()
+    if artifact is None or not artifact.tailored_experience_json:
+        return None
+
+    raw_spec = artifact.tailored_experience_json
+    if isinstance(raw_spec, dict) and "ats" in raw_spec:
+        raw_spec = raw_spec["ats"]
+    resume_spec = ResumeSpec.model_validate(raw_spec)
+
+    job_text = job.cleaned_text or job.raw_description or ""
+    experiences = list(
+        session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
+    )
+    _, grounded_keywords, match_pct = extract_ats_keywords(job_text, profile, experiences)
+    persona = artifact.selected_persona or select_persona(job_text, profile)
+    language: TargetLanguage = (
+        job.language  # type: ignore[assignment]
+        if job.language in ("pt-br", "en")
+        else detect_language(job_text)
+    )
+
+    assert artifact.id is not None
+    assert job.id is not None
+    return TailoringResult(
+        artifact_id=artifact.id,
+        job_id=job.id,
+        language=language,
+        selected_persona=persona,
+        ats_keywords=grounded_keywords,
+        match_percentage=match_pct,
+        resume_spec=resume_spec,
+        cover_letter_text=artifact.cover_letter_text or "",
     )
 
 

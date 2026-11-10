@@ -101,6 +101,7 @@ async def start_scraper(
     max_jobs: int | None = None,
 ) -> dict[str, str]:
     req = payload or ScraperStartRequest()
+    assert current_user.id is not None
     run = await start_scraper_run(
         query=query if query is not None else req.query,
         location=location if location is not None else req.location,

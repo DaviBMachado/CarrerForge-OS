@@ -16,6 +16,7 @@ from backend.app.services.tailoring_engine import (
     FactualGuardrailError,
     build_tailoring_system_prompt,
     extract_ats_keywords,
+    get_tailored_artifact,
     solve_screening_question,
     tailor_job_application,
     verify_factual_guardrails,
@@ -460,3 +461,98 @@ def test_solve_question_rejects_ungrounded_tech_hallucination(
             question="Tell us about your infrastructure experience.",
             orchestrator=orchestrator,
         )
+
+
+def test_get_tailored_artifact_retrieves_saved_spec_without_llm(
+    session: Session,
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    _, profile, job = candidate_setup
+    assert get_tailored_artifact(session, job, profile) is None
+
+    # Persist mock artifact
+    spec_data = {
+        "name": profile.full_name,
+        "title": "Backend Python Engineer",
+        "contact": "davi@example.com",
+        "filename_title": "Resume_Davi",
+        "sections": [
+            {
+                "title": "Professional Experience",
+                "blocks": [{"type": "bullet", "text": "Built Python APIs"}],
+            }
+        ],
+    }
+    assert job.id is not None
+    artifact = TailoredArtifact(
+        job_id=job.id,
+        selected_persona="Backend Python Engineer",
+        tailored_summary="Experienced backend engineer.",
+        tailored_experience_json=spec_data,
+        cover_letter_text="P1\n\nP2\n\nP3",
+    )
+    session.add(artifact)
+    session.commit()
+
+    retrieved = get_tailored_artifact(session, job, profile)
+    assert retrieved is not None
+    assert retrieved.job_id == job.id
+    assert retrieved.selected_persona == "Backend Python Engineer"
+    assert retrieved.cover_letter_text == "P1\n\nP2\n\nP3"
+    assert retrieved.resume_spec.name == profile.full_name
+
+
+def test_get_tailor_endpoint_and_spa_route_error(
+    session: Session,
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    from fastapi.testclient import TestClient
+
+    user, profile, job = candidate_setup
+
+    def override_get_db():
+        yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(app) as client:
+            headers = {"X-User-Id": str(user.id)}
+
+            # 1. 404 when artifact not yet generated
+            resp_404 = client.get(f"/api/tailor/{job.id}", headers=headers)
+            assert resp_404.status_code == 404
+            assert "Tailored artifact not yet generated" in resp_404.json()["detail"]
+
+            # 2. Persist artifact and verify 200 GET
+            assert job.id is not None
+            artifact = TailoredArtifact(
+                job_id=job.id,
+                selected_persona="Backend Python Engineer",
+                tailored_summary="Experienced backend engineer.",
+                tailored_experience_json={
+                    "name": profile.full_name,
+                    "title": "Backend Engineer",
+                    "contact": "davi@example.com",
+                    "filename_title": "Resume",
+                    "sections": [],
+                },
+                cover_letter_text="Cover letter content",
+            )
+            session.add(artifact)
+            session.commit()
+
+            resp_200 = client.get(f"/api/tailor/{job.id}", headers=headers)
+            assert resp_200.status_code == 200
+            data = resp_200.json()
+            assert data["job_id"] == job.id
+            assert data["selected_persona"] == "Backend Python Engineer"
+            assert data["cover_letter_text"] == "Cover letter content"
+
+            # 3. Descriptive 404 for nonexistent API route
+            resp_not_found = client.get("/api/nonexistent-endpoint")
+            assert resp_not_found.status_code == 404
+            assert (
+                "API route '/api/nonexistent-endpoint' not found" in resp_not_found.json()["detail"]
+            )
+    finally:
+        app.dependency_overrides.clear()

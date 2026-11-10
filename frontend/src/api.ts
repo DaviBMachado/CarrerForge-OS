@@ -356,6 +356,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  getTailoredJob: (jobId: number) =>
+    request<TailoringResult>(`/api/tailor/${jobId}`),
   tailorJob: (jobId: number) =>
     request<TailoringResult>(`/api/tailor/${jobId}`, {
       method: "POST",

@@ -245,7 +245,7 @@ export function TailoringStudio({
     }
   }, [profile, selectedJob]);
 
-  // Sync job-specific rundown and baseline keywords when selectedJob changes
+  // Sync job-specific rundown, existing tailored artifact, and baseline keywords when selectedJob changes
   useEffect(() => {
     if (!selectedJob) return;
     const jobText = selectedJob.cleaned_text || selectedJob.raw_description || "";
@@ -253,6 +253,30 @@ export function TailoringStudio({
     setAtsKeywords(local.keywords);
     setMatchPercentage(local.matchPct);
     setLanguage(selectedJob.language || "en");
+
+    api
+      .getTailoredJob(selectedJob.id)
+      .then((tailored) => {
+        setPersona(tailored.selected_persona);
+        setLanguage(tailored.language);
+        setAtsKeywords(tailored.ats_keywords);
+        setMatchPercentage(tailored.match_percentage);
+        setResumeSpec({
+          ...tailored.resume_spec,
+          sections: normalizeSections(tailored.resume_spec.sections || []),
+        });
+        setCoverLetter(tailored.cover_letter_text);
+      })
+      .catch(() => {
+        // Not tailored yet: fallback to initial spec from master profile if empty
+        if (profile) {
+          setResumeSpec((prev) => {
+            const isClean =
+              !prev.name && (!prev.sections || prev.sections.length === 0);
+            return isClean ? profileToInitialSpec(profile, selectedJob) : prev;
+          });
+        }
+      });
 
     api
       .getGupyRundown(selectedJob.id)

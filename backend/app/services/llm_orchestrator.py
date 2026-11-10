@@ -7,9 +7,12 @@ from urllib.parse import urlparse
 import httpx
 from sqlmodel import Session
 
+from backend.app.logging_config import get_logger
 from backend.app.models import MasterProfile
 from backend.app.schemas.settings import LLMProvider
 from backend.app.services.settings import SETTING_KEYS, get_raw_setting
+
+logger = get_logger("careerforge.llm")
 
 TargetLanguage = Literal["en", "pt-br"]
 
@@ -394,6 +397,12 @@ class LLMOrchestrator:
         json_mode: bool,
         temperature: float,
     ) -> str:
+        payload_size = len(prompt) + len(system_prompt)
+        configured_model = self.DEFAULT_MODELS.get(provider, "default")
+        logger.info(
+            f"Dispatching LLM call: provider='{provider}' model='{configured_model}' "
+            f"payload_chars={payload_size} json_mode={json_mode}"
+        )
         secret: str | None = None
         try:
             if provider == "gemini":
@@ -434,6 +443,7 @@ class LLMOrchestrator:
             raise
         except httpx.HTTPError as exc:
             safe_msg = _redact_secret(str(exc), secret)
+            logger.error(f"HTTP error communicating with {provider}: {safe_msg}")
             raise LLMProviderError(
                 f"HTTP error communicating with {provider}: {safe_msg}"
             ) from None
@@ -467,21 +477,33 @@ class LLMOrchestrator:
         for model in candidate_models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             for attempt in range(2):
+                start_time = time.perf_counter()
                 resp = client.post(url, headers={"x-goog-api-key": api_key}, json=payload)
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
                 last_resp = resp
                 if resp.status_code == 200:
                     data = resp.json()
+                    usage = data.get("usageMetadata") or {}
+                    total_tokens = usage.get("totalTokenCount")
+                    token_info = f"tokens={total_tokens}" if total_tokens is not None else "tokens=n/a"
+                    logger.info(
+                        f"Gemini call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {token_info}"
+                    )
                     try:
                         return str(data["candidates"][0]["content"]["parts"][0]["text"])
                     except (KeyError, IndexError, TypeError) as exc:
                         raise LLMProviderError("Unexpected Gemini response schema.") from exc
                 if resp.status_code in (503, 429) and attempt == 0:
+                    logger.warning(
+                        f"Gemini call returned {resp.status_code} on attempt 1 for model='{model}'. Retrying in 1s..."
+                    )
                     time.sleep(1.0)
                     continue
                 break
 
         if last_resp is not None:
             err_msg = _redact_secret(last_resp.text, api_key)
+            logger.error(f"Gemini call failed: status={last_resp.status_code} error={err_msg}")
             raise LLMProviderError(f"Gemini API error ({last_resp.status_code}): {err_msg}")
         raise LLMProviderError("Gemini API call failed with no response.")
 
@@ -500,24 +522,33 @@ class LLMOrchestrator:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        model = self.DEFAULT_MODELS["openai"]
         payload: dict[str, Any] = {
-            "model": self.DEFAULT_MODELS["openai"],
+            "model": model,
             "messages": messages,
             "temperature": temperature,
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
+        start_time = time.perf_counter()
         resp = client.post(
             url,
             headers={"Authorization": f"Bearer {api_key}"},
             json=payload,
         )
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
         if resp.status_code >= 400:
+            err_msg = _redact_secret(resp.text, api_key)
+            logger.error(f"OpenAI call failed: status={resp.status_code} elapsed={elapsed_ms:.1f}ms error={err_msg}")
             raise LLMProviderError(
-                f"OpenAI API error ({resp.status_code}): {_redact_secret(resp.text, api_key)}"
+                f"OpenAI API error ({resp.status_code}): {err_msg}"
             )
         data = resp.json()
+        usage = data.get("usage") or {}
+        total_tokens = usage.get("total_tokens")
+        token_info = f"tokens={total_tokens}" if total_tokens is not None else "tokens=n/a"
+        logger.info(f"OpenAI call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {token_info}")
         try:
             return str(data["choices"][0]["message"]["content"])
         except (KeyError, IndexError, TypeError) as exc:
@@ -544,8 +575,9 @@ class LLMOrchestrator:
                 else json_instruction
             )
 
+        model = self.DEFAULT_MODELS["claude"]
         payload: dict[str, Any] = {
-            "model": self.DEFAULT_MODELS["claude"],
+            "model": model,
             "max_tokens": 4096,
             "temperature": temperature,
             "messages": [{"role": "user", "content": prompt}],
@@ -553,6 +585,7 @@ class LLMOrchestrator:
         if effective_system:
             payload["system"] = effective_system
 
+        start_time = time.perf_counter()
         resp = client.post(
             url,
             headers={
@@ -561,11 +594,20 @@ class LLMOrchestrator:
             },
             json=payload,
         )
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
         if resp.status_code >= 400:
+            err_msg = _redact_secret(resp.text, api_key)
+            logger.error(f"Claude call failed: status={resp.status_code} elapsed={elapsed_ms:.1f}ms error={err_msg}")
             raise LLMProviderError(
-                f"Claude API error ({resp.status_code}): {_redact_secret(resp.text, api_key)}"
+                f"Claude API error ({resp.status_code}): {err_msg}"
             )
         data = resp.json()
+        usage = data.get("usage") or {}
+        inp = usage.get("input_tokens") or 0
+        out = usage.get("output_tokens") or 0
+        total_tokens = inp + out if (inp or out) else None
+        token_info = f"tokens={total_tokens}" if total_tokens is not None else "tokens=n/a"
+        logger.info(f"Claude call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {token_info}")
         try:
             return str(data["content"][0]["text"])
         except (KeyError, IndexError, TypeError) as exc:
@@ -586,8 +628,9 @@ class LLMOrchestrator:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        model = self.DEFAULT_MODELS["ollama"]
         payload: dict[str, Any] = {
-            "model": self.DEFAULT_MODELS["ollama"],
+            "model": model,
             "messages": messages,
             "stream": False,
             "options": {"temperature": temperature},
@@ -595,10 +638,16 @@ class LLMOrchestrator:
         if json_mode:
             payload["format"] = "json"
 
+        start_time = time.perf_counter()
         resp = client.post(url, json=payload)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
         if resp.status_code >= 400:
+            logger.error(f"Ollama call failed: status={resp.status_code} elapsed={elapsed_ms:.1f}ms error={resp.text}")
             raise LLMProviderError(f"Ollama API error ({resp.status_code}): {resp.text}")
         data = resp.json()
+        tokens = data.get("eval_count")
+        token_info = f"tokens={tokens}" if tokens is not None else "tokens=n/a"
+        logger.info(f"Ollama call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {token_info}")
         try:
             return str(data["message"]["content"])
         except (KeyError, TypeError) as exc:

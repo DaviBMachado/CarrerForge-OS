@@ -19,6 +19,7 @@ from backend.app.services.tailoring_engine import (
     SolveQuestionResponse,
     TailoringResult,
     generate_gupy_rundown,
+    get_tailored_artifact,
     solve_screening_question,
     tailor_job_application,
 )
@@ -29,6 +30,7 @@ DBSession = Annotated[Session, Depends(get_db)]
 
 
 def get_llm_orchestrator(session: DBSession, current_user: CurrentUser) -> LLMOrchestrator:
+    assert current_user.id is not None
     return LLMOrchestrator(session, user_id=current_user.id)
 
 
@@ -46,6 +48,22 @@ def _get_user_job(
         )
     profile = get_or_create_user_profile(session, current_user)
     return job, profile
+
+
+@router.get("/{job_id}", response_model=TailoringResult)
+def get_tailored_job(
+    job_id: int,
+    session: DBSession,
+    current_user: CurrentUser,
+) -> TailoringResult:
+    job, profile = _get_user_job(session, job_id, current_user)
+    result = get_tailored_artifact(session, job, profile)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tailored artifact not yet generated for this job",
+        )
+    return result
 
 
 @router.post("/{job_id}", response_model=TailoringResult)
