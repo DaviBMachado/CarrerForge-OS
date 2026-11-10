@@ -1,14 +1,10 @@
 import logging
-from unittest.mock import patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.logging_config import (
     StructuredFormatter,
-    get_logger,
     sanitize_sensitive_data,
-    setup_logging,
 )
 from backend.app.services.resume_compiler import ResumeCompiler, ResumeSpec
 from backend.main import app

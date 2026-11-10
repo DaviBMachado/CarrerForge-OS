@@ -3,7 +3,6 @@ import logging
 import os
 import re
 import sys
-from typing import Any
 
 # Patterns to mask sensitive tokens, credentials, and API keys
 _REDACTION_RULES: list[tuple[re.Pattern[str], str]] = [
@@ -40,11 +39,11 @@ def sanitize_sensitive_data(message: str) -> str:
 
 
 _ANSI_COLORS = {
-    logging.DEBUG: "\033[36m",     # Cyan
-    logging.INFO: "\033[32m",      # Green
-    logging.WARNING: "\033[33m",   # Yellow
-    logging.ERROR: "\033[31m",     # Red
-    logging.CRITICAL: "\033[1;31m", # Bold Red
+    logging.DEBUG: "\033[36m",  # Cyan
+    logging.INFO: "\033[32m",  # Green
+    logging.WARNING: "\033[33m",  # Yellow
+    logging.ERROR: "\033[31m",  # Red
+    logging.CRITICAL: "\033[1;31m",  # Bold Red
 }
 _ANSI_RESET = "\033[0m"
 

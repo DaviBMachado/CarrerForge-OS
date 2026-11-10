@@ -1,7 +1,7 @@
+import time
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
-import time
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -66,6 +66,8 @@ async def http_request_tracing_middleware(request: Request, call_next):
             exc_info=True,
         )
         raise
+
+
 app.include_router(compiler_router, prefix="/api")
 app.include_router(profile_router, prefix="/api")
 app.include_router(scraper_router, prefix="/api")

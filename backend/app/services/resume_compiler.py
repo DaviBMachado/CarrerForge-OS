@@ -526,8 +526,10 @@ class ResumeCompiler:
 
         doc.build(story)
         page_count = int(getattr(doc, "page", 1))
+        size_bytes = len(buf.getvalue())
         logger.info(
-            f"Compiled PDF cover letter '{display_title}': {page_count} page(s) ({len(buf.getvalue())} bytes)"
+            f"Compiled PDF cover letter '{display_title}': "
+            f"{page_count} page(s) ({size_bytes} bytes)"
         )
         buf.seek(0)
         return buf

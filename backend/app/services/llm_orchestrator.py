@@ -485,9 +485,10 @@ class LLMOrchestrator:
                     data = resp.json()
                     usage = data.get("usageMetadata") or {}
                     total_tokens = usage.get("totalTokenCount")
-                    token_info = f"tokens={total_tokens}" if total_tokens is not None else "tokens=n/a"
+                    tok_str = f"tokens={total_tokens}" if total_tokens is not None else "tokens=n/a"
                     logger.info(
-                        f"Gemini call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {token_info}"
+                        f"Gemini call succeeded: model='{model}' "
+                        f"elapsed={elapsed_ms:.1f}ms {tok_str}"
                     )
                     try:
                         return str(data["candidates"][0]["content"]["parts"][0]["text"])
@@ -495,7 +496,7 @@ class LLMOrchestrator:
                         raise LLMProviderError("Unexpected Gemini response schema.") from exc
                 if resp.status_code in (503, 429) and attempt == 0:
                     logger.warning(
-                        f"Gemini call returned {resp.status_code} on attempt 1 for model='{model}'. Retrying in 1s..."
+                        f"Gemini status {resp.status_code} for model='{model}'. Retrying in 1s..."
                     )
                     time.sleep(1.0)
                     continue
@@ -540,15 +541,15 @@ class LLMOrchestrator:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         if resp.status_code >= 400:
             err_msg = _redact_secret(resp.text, api_key)
-            logger.error(f"OpenAI call failed: status={resp.status_code} elapsed={elapsed_ms:.1f}ms error={err_msg}")
-            raise LLMProviderError(
-                f"OpenAI API error ({resp.status_code}): {err_msg}"
+            logger.error(
+                f"OpenAI call failed ({resp.status_code}) in {elapsed_ms:.1f}ms: {err_msg}"
             )
+            raise LLMProviderError(f"OpenAI API error ({resp.status_code}): {err_msg}")
         data = resp.json()
         usage = data.get("usage") or {}
         total_tokens = usage.get("total_tokens")
-        token_info = f"tokens={total_tokens}" if total_tokens is not None else "tokens=n/a"
-        logger.info(f"OpenAI call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {token_info}")
+        tok_str = f"tokens={total_tokens}" if total_tokens is not None else "tokens=n/a"
+        logger.info(f"OpenAI call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {tok_str}")
         try:
             return str(data["choices"][0]["message"]["content"])
         except (KeyError, IndexError, TypeError) as exc:
@@ -597,17 +598,17 @@ class LLMOrchestrator:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         if resp.status_code >= 400:
             err_msg = _redact_secret(resp.text, api_key)
-            logger.error(f"Claude call failed: status={resp.status_code} elapsed={elapsed_ms:.1f}ms error={err_msg}")
-            raise LLMProviderError(
-                f"Claude API error ({resp.status_code}): {err_msg}"
+            logger.error(
+                f"Claude call failed ({resp.status_code}) in {elapsed_ms:.1f}ms: {err_msg}"
             )
+            raise LLMProviderError(f"Claude API error ({resp.status_code}): {err_msg}")
         data = resp.json()
         usage = data.get("usage") or {}
         inp = usage.get("input_tokens") or 0
         out = usage.get("output_tokens") or 0
         total_tokens = inp + out if (inp or out) else None
-        token_info = f"tokens={total_tokens}" if total_tokens is not None else "tokens=n/a"
-        logger.info(f"Claude call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {token_info}")
+        tok_str = f"tokens={total_tokens}" if total_tokens is not None else "tokens=n/a"
+        logger.info(f"Claude call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {tok_str}")
         try:
             return str(data["content"][0]["text"])
         except (KeyError, IndexError, TypeError) as exc:
@@ -642,12 +643,14 @@ class LLMOrchestrator:
         resp = client.post(url, json=payload)
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         if resp.status_code >= 400:
-            logger.error(f"Ollama call failed: status={resp.status_code} elapsed={elapsed_ms:.1f}ms error={resp.text}")
+            logger.error(
+                f"Ollama call failed ({resp.status_code}) in {elapsed_ms:.1f}ms: {resp.text}"
+            )
             raise LLMProviderError(f"Ollama API error ({resp.status_code}): {resp.text}")
         data = resp.json()
         tokens = data.get("eval_count")
-        token_info = f"tokens={tokens}" if tokens is not None else "tokens=n/a"
-        logger.info(f"Ollama call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {token_info}")
+        tok_str = f"tokens={tokens}" if tokens is not None else "tokens=n/a"
+        logger.info(f"Ollama call succeeded: model='{model}' elapsed={elapsed_ms:.1f}ms {tok_str}")
         try:
             return str(data["message"]["content"])
         except (KeyError, TypeError) as exc:

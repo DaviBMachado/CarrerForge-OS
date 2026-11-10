@@ -6,8 +6,6 @@ from sqlmodel import Session, select
 
 from backend.app.logging_config import get_logger
 from backend.app.models import Experience, JobPosting, MasterProfile, TailoredArtifact
-
-logger = get_logger("careerforge.tailor")
 from backend.app.services.llm_orchestrator import (
     LLMOrchestrator,
     LLMProviderError,
@@ -16,6 +14,8 @@ from backend.app.services.llm_orchestrator import (
     select_persona,
 )
 from backend.app.services.resume_compiler import ResumeSpec
+
+logger = get_logger("careerforge.tailor")
 
 _KNOWN_TECH_VOCAB: set[str] = {
     "python",
@@ -298,7 +298,7 @@ def verify_factual_guardrails(
         logger.warning(f"Factual guardrail violation: {err_msg}")
         raise FactualGuardrailError(err_msg)
 
-    logger.info("Factual guardrail check passed: zero ungrounded technologies or companies detected")
+    logger.info("Factual guardrail check passed: zero ungrounded technologies detected")
 
 
 def build_tailoring_system_prompt(
@@ -493,9 +493,7 @@ def tailor_job_application(
     session.refresh(artifact)
     assert artifact.id is not None
     assert job.id is not None
-    logger.info(
-        f"Tailoring lifecycle completed successfully for job_id={job.id} (artifact_id={artifact.id})"
-    )
+    logger.info(f"Tailoring completed for job_id={job.id} (artifact_id={artifact.id})")
     return TailoringResult(
         artifact_id=artifact.id,
         job_id=job.id,
