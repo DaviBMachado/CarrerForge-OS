@@ -615,7 +615,7 @@ export function TailoringStudio({
             </span>
           </div>
 
-          <div className="field">
+          <div className="field" style={{ flexShrink: 0 }}>
             <label className="field-label" htmlFor="studio-job-select">
               Target Job Posting
             </label>
@@ -713,7 +713,7 @@ export function TailoringStudio({
                     </div>
                   </div>
 
-                  <div className="field">
+                  <div className="field" style={{ flexShrink: 0 }}>
                     <span className="field-label">
                       Grounded ATS Keywords ({atsKeywords.length})
                     </span>
@@ -752,6 +752,7 @@ export function TailoringStudio({
                         justifyContent: "space-between",
                         alignItems: "center",
                         marginBottom: "0.35rem",
+                        flexShrink: 0,
                       }}
                     >
                       <span className="field-label" style={{ marginBottom: 0 }}>
@@ -771,12 +772,6 @@ export function TailoringStudio({
                       tabIndex={0}
                       role="region"
                       aria-label="Full job description"
-                      style={{
-                        wordBreak: "break-word",
-                        overflowY: "auto",
-                        maxHeight: "460px",
-                        minHeight: "220px",
-                      }}
                     >
                       {jobText || "No job description available."}
                     </div>
@@ -1262,6 +1257,7 @@ export function TailoringStudio({
         <aside
           className="panel studio-pane"
           aria-labelledby="studio-right-heading"
+          style={{ overflowY: "auto" }}
         >
           <div className="panel-header">
             <div>
