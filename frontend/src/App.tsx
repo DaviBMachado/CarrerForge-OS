@@ -20,6 +20,9 @@ export function App() {
   const fetchSettings = useAppStore((s) => s.fetchSettings);
   const radarLogs = useAppStore((s) => s.radarLogs);
   const clearRadarLogs = useAppStore((s) => s.clearRadarLogs);
+  const scraperRunning = useAppStore((s) => s.scraperRunning);
+  const scraperProgress = useAppStore((s) => s.scraperProgress);
+  const setScraperRunning = useAppStore((s) => s.setScraperRunning);
 
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
@@ -35,6 +38,19 @@ export function App() {
     window.setTimeout(() => {
       setToast((prev) => (prev?.message === message ? null : prev));
     }, 4500);
+  };
+
+  const handleCancelScraper = async () => {
+    try {
+      await api.stopScraper();
+      setScraperRunning(false);
+      notify("success", t("runtime.scraperStopped"));
+    } catch (err) {
+      notify(
+        "error",
+        err instanceof Error ? err.message : "Failed to stop scraper"
+      );
+    }
   };
 
   useEffect(() => {
@@ -339,6 +355,77 @@ export function App() {
               </p>
             )}
           </section>
+
+          {scraperRunning && (
+            <div
+              style={{
+                marginTop: "1.25rem",
+                padding: "0.875rem 1rem",
+                borderRadius: "8px",
+                background: "var(--bg-elevated)",
+                border: "1px solid var(--accent-tint)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "1rem",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    fontSize: "0.85rem",
+                    marginBottom: "0.4rem",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                    }}
+                  >
+                    <span
+                      className="status-dot"
+                      style={{ backgroundColor: "var(--accent)" }}
+                    />
+                    <strong style={{ color: "var(--ink-primary)" }}>
+                      {t("runtime.scraperActive")}
+                    </strong>
+                  </div>
+                  <span style={{ fontWeight: 600, color: "var(--accent)" }}>
+                    {scraperProgress}%
+                  </span>
+                </div>
+                <div
+                  style={{
+                    height: "6px",
+                    background: "var(--border-subtle)",
+                    borderRadius: "999px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${scraperProgress}%`,
+                      backgroundColor: "var(--accent)",
+                      transition: "width 0.3s ease",
+                    }}
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={handleCancelScraper}
+              >
+                {t("runtime.stopScraper")}
+              </button>
+            </div>
+          )}
 
           <section
             className="panel"

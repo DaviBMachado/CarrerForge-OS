@@ -10,6 +10,9 @@ import { AppLanguage } from "./i18n";
 
 const LANGUAGE_STORAGE_KEY = "careerforge_language";
 
+let fetchSeq = 0;
+let pendingProfilePromise: Promise<MasterProfile | null> | null = null;
+
 function getInitialLanguage(): AppLanguage {
   try {
     const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
@@ -49,7 +52,11 @@ interface AppState {
   setSettings: (settings: SystemSettings | null) => void;
   fetchSettings: (force?: boolean) => Promise<SystemSettings | null>;
 
-  // Job Radar Stream Logs
+  // Job Radar Stream Logs & State
+  scraperRunning: boolean;
+  scraperProgress: number;
+  setScraperRunning: (running: boolean) => void;
+  setScraperProgress: (progress: number) => void;
   radarLogs: ScraperStreamEvent[];
   addRadarLog: (log: ScraperStreamEvent) => void;
   clearRadarLogs: () => void;
@@ -87,14 +94,35 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   profile: null,
   profileLoaded: false,
-  setProfile: (profile) => set({ profile, profileLoaded: true }),
+  setProfile: (profile) => {
+    fetchSeq++;
+    set({ profile, profileLoaded: true });
+  },
   fetchProfile: async (force = false) => {
     if (!force && get().profileLoaded) {
       return get().profile;
     }
-    const data = await api.getProfile();
-    set({ profile: data, profileLoaded: true });
-    return data;
+    if (!force && pendingProfilePromise) {
+      return pendingProfilePromise;
+    }
+
+    const currentSeq = ++fetchSeq;
+    const fetchPromise = (async () => {
+      try {
+        const data = await api.getProfile();
+        if (currentSeq === fetchSeq) {
+          set({ profile: data, profileLoaded: true });
+        }
+        return data;
+      } finally {
+        if (pendingProfilePromise === fetchPromise) {
+          pendingProfilePromise = null;
+        }
+      }
+    })();
+
+    pendingProfilePromise = fetchPromise;
+    return fetchPromise;
   },
 
   settings: null,
@@ -113,8 +141,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  scraperRunning: false,
+  scraperProgress: 0,
+  setScraperRunning: (scraperRunning) => set({ scraperRunning }),
+  setScraperProgress: (scraperProgress) => set({ scraperProgress }),
+
   radarLogs: [],
   addRadarLog: (log) =>
-    set((state) => ({ radarLogs: [...state.radarLogs, log] })),
+    set((state) => ({ radarLogs: [...state.radarLogs.slice(-249), log] })),
   clearRadarLogs: () => set({ radarLogs: [] }),
 }));

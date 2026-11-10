@@ -49,6 +49,9 @@ export const translations = {
     "runtime.clearLogs": "Clear Telemetry Logs",
     "runtime.noLogs": "No scraper telemetry events recorded in current session.",
     "runtime.filterAll": "All Events",
+    "runtime.scraperActive": "Scraper Running",
+    "runtime.stopScraper": "Stop Scraper",
+    "runtime.scraperStopped": "Scraper execution stopped.",
   },
   "pt-BR": {
     // Navigation / Tabs
@@ -98,6 +101,9 @@ export const translations = {
     "runtime.clearLogs": "Limpar Logs de Telemetria",
     "runtime.noLogs": "Nenhum evento de telemetria registrado na sessão atual.",
     "runtime.filterAll": "Todos os Eventos",
+    "runtime.scraperActive": "Raspagem em Andamento",
+    "runtime.stopScraper": "Interromper",
+    "runtime.scraperStopped": "Raspagem de vagas interrompida.",
   },
 } as const;
 

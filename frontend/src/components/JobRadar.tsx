@@ -37,17 +37,26 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
   const logs = useAppStore((s) => s.radarLogs);
   const addRadarLog = useAppStore((s) => s.addRadarLog);
   const clearRadarLogs = useAppStore((s) => s.clearRadarLogs);
+  const running = useAppStore((s) => s.scraperRunning);
+  const setRunning = useAppStore((s) => s.setScraperRunning);
+  const progress = useAppStore((s) => s.scraperProgress);
+  const setProgress = useAppStore((s) => s.setScraperProgress);
 
   const [loadingJobs, setLoadingJobs] = useState(!useAppStore.getState().jobsLoaded);
   const [showArchived, setShowArchived] = useState(false);
 
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(true);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!running && eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  }, [running]);
 
   const refreshJobs = async (force = false) => {
     try {
