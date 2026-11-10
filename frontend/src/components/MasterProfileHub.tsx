@@ -265,6 +265,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
       setNewExpCurrent(false);
       setShowNewExpForm(false);
       onNotify("success", `Added experience at ${created.company}.`);
+      void useAppStore.getState().fetchProfile(true);
     } catch (err) {
       onNotify(
         "error",
@@ -296,6 +297,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
       });
       updateLocalExp(exp.id, () => saved);
       onNotify("success", `Saved experience: ${saved.role} @ ${saved.company}`);
+      void useAppStore.getState().fetchProfile(true);
     } catch (err) {
       onNotify(
         "error",
@@ -311,6 +313,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
       await api.deleteExperience(id);
       setExperiences((prev) => prev.filter((e) => e.id !== id));
       onNotify("success", `Removed ${company} from Master Profile.`);
+      void useAppStore.getState().fetchProfile(true);
     } catch (err) {
       onNotify(
         "error",

@@ -259,6 +259,16 @@ export function GeneralResumeBuilder({ onNotify }: GeneralResumeBuilderProps) {
     };
   }, [fetchProfile]);
 
+  // Synchronize clean editor text if profile changes in store
+  useEffect(() => {
+    if (
+      profile &&
+      (profile.full_name || (profile.experiences && profile.experiences.length > 0))
+    ) {
+      setEditorText((prev) => (prev.trim() === "" ? profileToText(profile) : prev));
+    }
+  }, [profile]);
+
   const spec = parseTextToSpec(editorText);
 
   // Debounced live compilation on text changes

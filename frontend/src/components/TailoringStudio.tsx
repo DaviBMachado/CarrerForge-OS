@@ -229,6 +229,22 @@ export function TailoringStudio({
     });
   }, []);
 
+  // Synchronize clean resume spec if profile changes in store
+  useEffect(() => {
+    if (
+      profile &&
+      (profile.full_name ||
+        (profile.experiences && profile.experiences.length > 0))
+    ) {
+      setResumeSpec((prev) => {
+        const isClean =
+          !prev.name && (!prev.sections || prev.sections.length === 0);
+        return isClean ? profileToInitialSpec(profile, selectedJob) : prev;
+      });
+      setPersona((prev) => prev || profile.headline || "");
+    }
+  }, [profile, selectedJob]);
+
   // Sync job-specific rundown and baseline keywords when selectedJob changes
   useEffect(() => {
     if (!selectedJob) return;
