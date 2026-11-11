@@ -1,4 +1,3 @@
-from backend.app.services.legacy_importer import import_legacy_data
 from backend.app.services.tailoring_engine import (
     FactualGuardrailError,
     GupyRundown,
@@ -14,7 +13,6 @@ from backend.app.services.tailoring_engine import (
 )
 
 __all__ = [
-    "import_legacy_data",
     "FactualGuardrailError",
     "GupyRundown",
     "SolveQuestionRequest",

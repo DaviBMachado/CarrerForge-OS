@@ -14,6 +14,7 @@ export interface ExperienceItem {
   start_date: string | null;
   end_date: string | null;
   is_current: boolean;
+  is_academic?: boolean;
   bullets_json: BulletItem[];
 }
 
@@ -24,6 +25,7 @@ export interface ExperiencePayload {
   start_date?: string | null;
   end_date?: string | null;
   is_current?: boolean;
+  is_academic?: boolean;
   bullets_json?: BulletItem[];
 }
 
@@ -57,14 +59,6 @@ export interface ProfileUpdatePayload {
   summary_base?: string | null;
   skills_json?: SkillsMatrix | null;
   languages_json?: string[] | null;
-}
-
-export interface LegacyImportResult {
-  status: string;
-  profile_id: number;
-  experiences_count: number;
-  specs_scanned: number;
-  total_bullets: number;
 }
 
 export interface SystemSettings {
@@ -133,6 +127,7 @@ export interface JobPostingItem {
   cleaned_text: string | null;
   language: string;
   status: string;
+  match_percentage?: number | null;
   created_at: string;
 }
 
@@ -140,8 +135,11 @@ export interface ScraperSessionStatus {
   authenticated: boolean;
   linkedin: boolean;
   gupy: boolean;
+  platforms?: Record<string, boolean>;
+  active_platform?: string | null;
   session_dir: string;
   status?: string;
+  browser_open?: boolean;
 }
 
 export interface ScraperStartPayload {
@@ -180,6 +178,7 @@ export interface GupyRundown {
   prioritized_skill_tags: string[];
   language: TargetLanguage;
   selected_persona: string;
+  screening_qa?: SolveQuestionResponse[];
 }
 
 export interface SolveQuestionResponse {
@@ -203,9 +202,19 @@ export interface CoverLetterSpecPayload {
   filename_title?: string;
 }
 
+function getAuthHeaders(): Record<string, string> {
+  if (typeof localStorage === "undefined") return {};
+  const token = localStorage.getItem("careerforge_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+      ...(init?.headers ?? {}),
+    },
     ...init,
   });
   if (!res.ok) {
@@ -225,6 +234,18 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  setAuthToken: (token: string | null) => {
+    if (typeof localStorage === "undefined") return;
+    if (token) {
+      localStorage.setItem("careerforge_token", token);
+    } else {
+      localStorage.removeItem("careerforge_token");
+    }
+  },
+  getAuthToken: (): string | null => {
+    if (typeof localStorage === "undefined") return null;
+    return localStorage.getItem("careerforge_token");
+  },
   getHealth: () => request<HealthStatus>("/api/health"),
   getProfile: () => request<MasterProfile>("/api/profile"),
   updateProfile: (data: ProfileUpdatePayload) =>
@@ -246,10 +267,26 @@ export const api = {
     request<void>(`/api/profile/experiences/${id}`, {
       method: "DELETE",
     }),
-  importLegacyProfile: () =>
-    request<LegacyImportResult>("/api/profile/import-legacy", {
+  uploadResume: async (file: File): Promise<MasterProfile> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/profile/upload", {
       method: "POST",
-    }),
+      headers: { ...getAuthHeaders() },
+      body: formData,
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const errJson = (await res.json()) as { detail?: string };
+        if (errJson.detail) detail = errJson.detail;
+      } catch {
+        // ignore non-json error body
+      }
+      throw new Error(detail);
+    }
+    return (await res.json()) as MasterProfile;
+  },
   getSettings: () => request<SystemSettings>("/api/settings"),
   saveSettings: (data: SettingsUpdatePayload) =>
     request<SystemSettings>("/api/settings", {
@@ -267,7 +304,7 @@ export const api = {
   ): Promise<{ blob: Blob; filename: string }> => {
     const res = await fetch(`/api/compiler/export?format=${format}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({ ...spec, format }),
     });
     if (!res.ok) {
@@ -293,6 +330,20 @@ export const api = {
     request<ScraperSessionStatus>("/api/scraper/session/login", {
       method: "POST",
     }),
+  openScraperSession: (platform?: string) =>
+    request<{ status: string; platform?: string }>("/api/scraper/session/open", {
+      method: "POST",
+      body: JSON.stringify({ platform: platform ?? null }),
+    }),
+  verifyScraperSession: (platform?: string) =>
+    request<ScraperSessionStatus>("/api/scraper/session/verify", {
+      method: "POST",
+      body: JSON.stringify({ platform: platform ?? null }),
+    }),
+  closeScraperSession: () =>
+    request<{ status: string }>("/api/scraper/session/close", {
+      method: "POST",
+    }),
   startScraper: (payload: ScraperStartPayload) =>
     request<{ run_id: string }>("/api/scraper/start", {
       method: "POST",
@@ -309,6 +360,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  getTailoredJob: (jobId: number) =>
+    request<TailoringResult>(`/api/tailor/${jobId}`),
   tailorJob: (jobId: number) =>
     request<TailoringResult>(`/api/tailor/${jobId}`, {
       method: "POST",
@@ -326,7 +379,7 @@ export const api = {
   ): Promise<{ blob: Blob; filename: string }> => {
     const res = await fetch(`/api/compiler/cover-letter/export?format=${format}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({ ...spec, format }),
     });
     if (!res.ok) {

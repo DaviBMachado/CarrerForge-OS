@@ -3,8 +3,9 @@ import re
 
 from sqlmodel import Session, select
 
-from backend.app.models import JobPosting
+from backend.app.models import Experience, JobPosting, MasterProfile
 from backend.app.services.scrapers.base import ScrapedJob
+from backend.app.services.tailoring_engine import extract_ats_keywords
 
 
 def _normalize_text(value: str) -> str:
@@ -35,6 +36,18 @@ def upsert_scraped_jobs(
     scraped_jobs: list[ScrapedJob],
 ) -> list[JobPosting]:
     existing_jobs = session.exec(select(JobPosting).where(JobPosting.user_id == user_id)).all()
+    profile = session.exec(select(MasterProfile).where(MasterProfile.user_id == user_id)).first()
+    experiences = (
+        list(session.exec(select(Experience).where(Experience.profile_id == profile.id)).all())
+        if profile and profile.id
+        else []
+    )
+
+    def _score(desc: str | None) -> int | None:
+        if not profile or not desc:
+            return None
+        job_kws, _, match_pct = extract_ats_keywords(desc, profile, experiences)
+        return match_pct if job_kws else 0
 
     by_hash: dict[str, JobPosting] = {}
     for job in existing_jobs:
@@ -65,6 +78,9 @@ def upsert_scraped_jobs(
             if combined_desc:
                 existing.raw_description = combined_desc
                 existing.cleaned_text = combined_desc
+            score = _score(combined_desc or existing.cleaned_text or existing.raw_description)
+            if score is not None:
+                existing.match_percentage = score
             session.add(existing)
             results.append(existing)
         else:
@@ -81,6 +97,7 @@ def upsert_scraped_jobs(
                 cleaned_text=combined_desc,
                 language=item.language,
                 status="discovered",
+                match_percentage=_score(combined_desc),
             )
             session.add(new_job)
             by_hash[ext_hash] = new_job

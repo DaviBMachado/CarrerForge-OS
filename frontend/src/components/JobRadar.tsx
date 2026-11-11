@@ -5,6 +5,7 @@ import {
   ScraperSessionStatus,
   ScraperStreamEvent,
 } from "../api";
+import { useAppStore } from "../store";
 
 interface JobRadarProps {
   onNotify: (type: "success" | "error", message: string) => void;
@@ -24,28 +25,43 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     "gupy",
   ]);
   const [remoteOnly, setRemoteOnly] = useState(false);
+  const [minMatchFilter, setMinMatchFilter] = useState(false);
 
   const [sessionStatus, setSessionStatus] =
     useState<ScraperSessionStatus | null>(null);
-  const [launchingLogin, setLaunchingLogin] = useState(false);
+  const [activeWaitingPlatform, setActiveWaitingPlatform] = useState<string | null>(null);
+  const [sessionLoadingPlatform, setSessionLoadingPlatform] = useState<string | null>(null);
 
-  const [jobs, setJobs] = useState<JobPostingItem[]>([]);
-  const [loadingJobs, setLoadingJobs] = useState(true);
+  const jobs = useAppStore((s) => s.jobs);
+  const setJobs = useAppStore((s) => s.setJobs);
+  const fetchJobs = useAppStore((s) => s.fetchJobs);
+  const logs = useAppStore((s) => s.radarLogs);
+  const addRadarLog = useAppStore((s) => s.addRadarLog);
+  const clearRadarLogs = useAppStore((s) => s.clearRadarLogs);
+  const running = useAppStore((s) => s.scraperRunning);
+  const setRunning = useAppStore((s) => s.setScraperRunning);
+  const progress = useAppStore((s) => s.scraperProgress);
+  const setProgress = useAppStore((s) => s.setScraperProgress);
+
+  const [loadingJobs, setLoadingJobs] = useState(!useAppStore.getState().jobsLoaded);
   const [showArchived, setShowArchived] = useState(false);
 
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [logs, setLogs] = useState<ScraperStreamEvent[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(true);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const refreshJobs = async () => {
+  useEffect(() => {
+    if (!running && eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  }, [running]);
+
+  const refreshJobs = async (force = false) => {
     try {
-      const data = await api.getScrapedJobs();
-      setJobs(data);
+      await fetchJobs(force);
     } catch (err) {
       onNotify(
         "error",
@@ -60,13 +76,18 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     try {
       const status = await api.getScraperSessionStatus();
       setSessionStatus(status);
+      if (status.browser_open) {
+        setActiveWaitingPlatform(status.active_platform || "all");
+      } else {
+        setActiveWaitingPlatform(null);
+      }
     } catch {
       // ignore initial status fetch errors
     }
   };
 
   useEffect(() => {
-    void refreshJobs();
+    void refreshJobs(false);
     void refreshSessionStatus();
     return () => {
       eventSourceRef.current?.close();
@@ -88,24 +109,63 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     });
   };
 
-  const handleOpenBrowserLogin = async () => {
-    setLaunchingLogin(true);
+  const handleOpenSession = async (platformId: string) => {
+    setSessionLoadingPlatform(platformId);
     try {
-      const res = await api.launchScraperLogin();
-      setSessionStatus(res);
+      await api.openScraperSession(platformId);
+      setActiveWaitingPlatform(platformId);
+      const platLabel = PLATFORMS.find((p) => p.id === platformId)?.label || platformId;
       onNotify(
         "success",
-        res.authenticated
-          ? "Browser session authenticated and saved."
-          : "Browser session closed. Check login status badge."
+        `Navegador aberto para ${platLabel}. Conclua o login na janela e depois clique em 'Verificar Login'.`
       );
     } catch (err) {
       onNotify(
         "error",
-        err instanceof Error ? err.message : "Failed to launch login browser"
+        err instanceof Error ? err.message : `Falha ao abrir navegador para login no ${platformId}`
       );
     } finally {
-      setLaunchingLogin(false);
+      setSessionLoadingPlatform(null);
+    }
+  };
+
+  const handleVerifySession = async (platformId: string) => {
+    setSessionLoadingPlatform(platformId);
+    try {
+      const res = await api.verifyScraperSession(platformId);
+      setSessionStatus(res);
+      setActiveWaitingPlatform(null);
+      const platLabel = PLATFORMS.find((p) => p.id === platformId)?.label || platformId;
+      onNotify(
+        "success",
+        `Login no ${platLabel} autenticado com sucesso! Cookies salvos para scraping.`
+      );
+    } catch (err) {
+      onNotify(
+        "error",
+        err instanceof Error && err.message
+          ? err.message
+          : `Sessao ainda nao detectada para ${platformId}. Conclua o login e tente novamente.`
+      );
+    } finally {
+      setSessionLoadingPlatform(null);
+    }
+  };
+
+  const handleCloseSession = async () => {
+    setSessionLoadingPlatform("close");
+    try {
+      await api.closeScraperSession();
+      setActiveWaitingPlatform(null);
+      await refreshSessionStatus();
+      onNotify("success", "Navegador fechado.");
+    } catch (err) {
+      onNotify(
+        "error",
+        err instanceof Error ? err.message : "Falha ao fechar navegador"
+      );
+    } finally {
+      setSessionLoadingPlatform(null);
     }
   };
 
@@ -117,7 +177,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as ScraperStreamEvent;
-        setLogs((prev) => [...prev, data]);
+        addRadarLog(data);
         if (typeof data.progress === "number") {
           setProgress(data.progress);
         }
@@ -128,7 +188,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
         ) {
           setRunning(false);
           es.close();
-          void refreshJobs();
+          void refreshJobs(true);
           if (data.status === "completed") {
             onNotify(
               "success",
@@ -146,7 +206,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     es.onerror = () => {
       setRunning(false);
       es.close();
-      void refreshJobs();
+      void refreshJobs(true);
     };
   };
 
@@ -159,7 +219,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     setRunning(true);
     setDrawerOpen(true);
     setProgress(0);
-    setLogs([]);
+    clearRadarLogs();
 
     try {
       const { run_id } = await api.startScraper({
@@ -185,7 +245,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
       eventSourceRef.current?.close();
       setRunning(false);
       onNotify("success", "Scraper stopped.");
-      void refreshJobs();
+      void refreshJobs(true);
     } catch (err) {
       onNotify(
         "error",
@@ -212,10 +272,18 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     }
   };
 
-  const isConnected = Boolean(sessionStatus?.authenticated);
-  const visibleJobs = jobs.filter((j) =>
-    showArchived ? j.status === "archived" : j.status !== "archived"
-  );
+  const visibleJobs = jobs.filter((j) => {
+    const statusMatches = showArchived
+      ? j.status === "archived"
+      : j.status !== "archived";
+    if (!statusMatches) return false;
+    if (minMatchFilter) {
+      return (
+        typeof j.match_percentage === "number" && j.match_percentage >= 50
+      );
+    }
+    return true;
+  });
 
   return (
     <div className="radar-layout">
@@ -229,31 +297,109 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
           </p>
         </div>
 
-        <div className="hub-actions" style={{ alignItems: "center" }}>
-          <div
-            className="status-pill"
-            role="status"
-            aria-label="Browser Session Status"
-          >
-            <span
-              className="status-dot"
-              style={{
-                backgroundColor: isConnected
-                  ? "var(--success)"
-                  : "var(--warning)",
-              }}
-            />
-            <span>Session: {isConnected ? "Connected" : "Disconnected"}</span>
-          </div>
+        <div className="hub-actions" style={{ alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          {PLATFORMS.map((p) => {
+            const isPlatformConnected = sessionStatus?.platforms
+              ? !!sessionStatus.platforms[p.id]
+              : p.id === "linkedin"
+              ? !!sessionStatus?.linkedin
+              : p.id === "gupy"
+              ? !!sessionStatus?.gupy
+              : false;
 
-          <button
-            type="button"
-            className="btn"
-            onClick={handleOpenBrowserLogin}
-            disabled={launchingLogin}
-          >
-            {launchingLogin ? "Browser Open..." : "Open Browser for Login"}
-          </button>
+            const isThisPlatformWaiting =
+              activeWaitingPlatform === p.id ||
+              (activeWaitingPlatform === "all" && !isPlatformConnected);
+            const isAnyWaiting = !!activeWaitingPlatform;
+            const isLoading =
+              sessionLoadingPlatform === p.id ||
+              (sessionLoadingPlatform === "close" && isThisPlatformWaiting);
+
+            return (
+              <div
+                key={p.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  padding: "0.3rem 0.65rem",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--border-subtle)",
+                  backgroundColor: "var(--surface-muted)",
+                }}
+              >
+                <span
+                  className="status-dot"
+                  style={{
+                    backgroundColor: isPlatformConnected
+                      ? "var(--success)"
+                      : isThisPlatformWaiting
+                      ? "var(--primary)"
+                      : "var(--warning)",
+                  }}
+                />
+                <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                  {p.label}:
+                </span>
+                <span
+                  style={{
+                    fontSize: "0.8rem",
+                    color: isPlatformConnected
+                      ? "var(--success)"
+                      : isThisPlatformWaiting
+                      ? "var(--primary)"
+                      : "var(--ink-secondary)",
+                    marginRight: "0.3rem",
+                  }}
+                >
+                  {isPlatformConnected
+                    ? "Conectado"
+                    : isThisPlatformWaiting
+                    ? "Aguardando..."
+                    : "Desconectado"}
+                </span>
+
+                {!isThisPlatformWaiting && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => handleOpenSession(p.id)}
+                    disabled={isAnyWaiting || isLoading}
+                    style={{ fontSize: "0.75rem", padding: "0.2rem 0.55rem" }}
+                  >
+                    {isLoading
+                      ? "Abrindo..."
+                      : isPlatformConnected
+                      ? "Reconectar"
+                      : "Login"}
+                  </button>
+                )}
+
+                {isThisPlatformWaiting && (
+                  <div style={{ display: "flex", gap: "0.25rem" }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => handleVerifySession(p.id)}
+                      disabled={isLoading}
+                      style={{ fontSize: "0.75rem", padding: "0.2rem 0.55rem", fontWeight: 600 }}
+                    >
+                      {isLoading ? "Verificando..." : "Verificar"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={handleCloseSession}
+                      disabled={isLoading}
+                      style={{ fontSize: "0.75rem", padding: "0.2rem 0.45rem" }}
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -322,6 +468,20 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
 
           <div
             className="field"
+            style={{ flex: "0 0 auto", justifyContent: "flex-end" }}
+          >
+            <label className="checkbox-pill">
+              <input
+                type="checkbox"
+                checked={minMatchFilter}
+                onChange={(e) => setMinMatchFilter(e.target.checked)}
+              />
+              <span>Match &gt; 50%</span>
+            </label>
+          </div>
+
+          <div
+            className="field"
             style={{
               flex: "0 0 auto",
               flexDirection: "row",
@@ -376,7 +536,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
             <button
               type="button"
               className="btn btn-sm"
-              onClick={() => void refreshJobs()}
+              onClick={() => void refreshJobs(true)}
             >
               Refresh
             </button>
@@ -406,11 +566,43 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
                     <h3 className="job-card-title">{job.title}</h3>
                     <div className="job-card-company">{job.company}</div>
                   </div>
-                  <span
-                    className={`platform-badge platform-${job.platform.toLowerCase()}`}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.35rem",
+                    }}
                   >
-                    {job.platform}
-                  </span>
+                    {typeof job.match_percentage === "number" && (
+                      <span
+                        className="status-pill"
+                        style={{
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          padding: "0.15rem 0.5rem",
+                          backgroundColor:
+                            job.match_percentage >= 50
+                              ? "var(--success-tint, rgba(16, 185, 129, 0.15))"
+                              : "var(--bg-subtle)",
+                          borderColor:
+                            job.match_percentage >= 50
+                              ? "var(--success, #10b981)"
+                              : "var(--border-subtle)",
+                          color:
+                            job.match_percentage >= 50
+                              ? "var(--success, #10b981)"
+                              : "var(--ink-secondary)",
+                        }}
+                      >
+                        {job.match_percentage}% match
+                      </span>
+                    )}
+                    <span
+                      className={`platform-badge platform-${job.platform.toLowerCase()}`}
+                    >
+                      {job.platform}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="job-card-meta">
@@ -499,7 +691,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
               <button
                 type="button"
                 className="btn btn-sm"
-                onClick={() => setLogs([])}
+                onClick={clearRadarLogs}
               >
                 Clear
               </button>

@@ -3,9 +3,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
+from backend.app.auth import CurrentUser
 from backend.app.db import get_db
-from backend.app.models import JobPosting
-from backend.app.routers.profile import get_or_create_default_profile
+from backend.app.models import JobPosting, MasterProfile, User
+from backend.app.routers.profile import get_or_create_user_profile
 from backend.app.services.llm_orchestrator import (
     LLMConfigurationError,
     LLMOrchestrator,
@@ -18,6 +19,7 @@ from backend.app.services.tailoring_engine import (
     SolveQuestionResponse,
     TailoringResult,
     generate_gupy_rundown,
+    get_tailored_artifact,
     solve_screening_question,
     tailor_job_application,
 )
@@ -27,22 +29,41 @@ router = APIRouter(prefix="/tailor", tags=["tailor"])
 DBSession = Annotated[Session, Depends(get_db)]
 
 
-def get_llm_orchestrator(session: DBSession) -> LLMOrchestrator:
-    return LLMOrchestrator(session)
+def get_llm_orchestrator(session: DBSession, current_user: CurrentUser) -> LLMOrchestrator:
+    assert current_user.id is not None
+    return LLMOrchestrator(session, user_id=current_user.id)
 
 
 LLMClient = Annotated[LLMOrchestrator, Depends(get_llm_orchestrator)]
 
 
-def _get_user_job(session: Session, job_id: int) -> tuple[JobPosting, object]:
-    profile = get_or_create_default_profile(session)
+def _get_user_job(
+    session: Session, job_id: int, current_user: User
+) -> tuple[JobPosting, MasterProfile]:
     job = session.get(JobPosting, job_id)
-    if not job or job.user_id != profile.user_id:
+    if not job or job.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Job posting not found",
         )
+    profile = get_or_create_user_profile(session, current_user)
     return job, profile
+
+
+@router.get("/{job_id}", response_model=TailoringResult)
+def get_tailored_job(
+    job_id: int,
+    session: DBSession,
+    current_user: CurrentUser,
+) -> TailoringResult:
+    job, profile = _get_user_job(session, job_id, current_user)
+    result = get_tailored_artifact(session, job, profile)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tailored artifact not yet generated for this job",
+        )
+    return result
 
 
 @router.post("/{job_id}", response_model=TailoringResult)
@@ -50,10 +71,11 @@ def run_tailor_job(
     job_id: int,
     session: DBSession,
     orchestrator: LLMClient,
+    current_user: CurrentUser,
 ) -> TailoringResult:
-    job, profile = _get_user_job(session, job_id)
+    job, profile = _get_user_job(session, job_id, current_user)
     try:
-        return tailor_job_application(session, job, profile, orchestrator=orchestrator)  # type: ignore[arg-type]
+        return tailor_job_application(session, job, profile, orchestrator=orchestrator)
     except LLMConfigurationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except FactualGuardrailError as exc:
@@ -66,9 +88,9 @@ def run_tailor_job(
 
 
 @router.get("/{job_id}/gupy-rundown", response_model=GupyRundown)
-def get_gupy_rundown(job_id: int, session: DBSession) -> GupyRundown:
-    job, profile = _get_user_job(session, job_id)
-    return generate_gupy_rundown(session, job, profile)  # type: ignore[arg-type]
+def get_gupy_rundown(job_id: int, session: DBSession, current_user: CurrentUser) -> GupyRundown:
+    job, profile = _get_user_job(session, job_id, current_user)
+    return generate_gupy_rundown(session, job, profile)
 
 
 @router.post("/{job_id}/solve-question", response_model=SolveQuestionResponse)
@@ -77,13 +99,14 @@ def post_solve_question(
     payload: SolveQuestionRequest,
     session: DBSession,
     orchestrator: LLMClient,
+    current_user: CurrentUser,
 ) -> SolveQuestionResponse:
-    job, profile = _get_user_job(session, job_id)
+    job, profile = _get_user_job(session, job_id, current_user)
     try:
         return solve_screening_question(
             session,
             job,
-            profile,  # type: ignore[arg-type]
+            profile,
             question=payload.question,
             orchestrator=orchestrator,
         )

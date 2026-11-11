@@ -4,7 +4,6 @@ from backend.app.schemas.profile import (
     ExperienceCreate,
     ExperienceRead,
     ExperienceUpdate,
-    LegacyImportResponse,
     ProfileRead,
     ProfileUpdate,
 )
@@ -22,7 +21,6 @@ __all__ = [
     "ExperienceUpdate",
     "ProfileRead",
     "ProfileUpdate",
-    "LegacyImportResponse",
     "LLMProvider",
     "SettingsRead",
     "SettingsUpdate",

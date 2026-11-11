@@ -18,6 +18,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+from backend.app.logging_config import get_logger
+
+logger = get_logger("careerforge.compiler")
+
 BULLET_CHAR = "\u2022"
 CONTACT_SEP = " | "
 FONT_FAMILY = "Carlito"
@@ -395,6 +399,8 @@ class ResumeCompiler:
 
         buf = io.BytesIO()
         doc.save(buf)
+        doc_name = parsed.filename_title or parsed.name or parsed.title or "Resume"
+        logger.info(f"Compiled DOCX resume '{doc_name}': {len(buf.getvalue())} bytes")
         buf.seek(0)
         return buf
 
@@ -443,17 +449,19 @@ class ResumeCompiler:
                 elif btype == "bullet":
                     story.append(Paragraph(f"{BULLET_CHAR}&nbsp;{text}", styles["bullet"]))
                 elif btype == "skillline":
-                    for i, part in enumerate(text.split("||")):
-                        part = part.strip()
-                        if not part:
-                            continue
-                        html = ("&nbsp;&nbsp;|&nbsp;&nbsp;" if i > 0 else "") + re.sub(
-                            r"\*\*(.+?)\*\*", r"<b>\1</b>", part
-                        )
-                        story.append(Paragraph(html, styles["skillline"]))
+                    parts = [p.strip() for p in text.split("||") if p.strip()]
+                    if not parts:
+                        continue
+                    formatted_parts = [re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", p) for p in parts]
+                    html = " &nbsp;|&nbsp; ".join(formatted_parts)
+                    story.append(Paragraph(html, styles["skillline"]))
 
         doc.build(story)
         page_count = int(getattr(doc, "page", 1))
+        doc_name = parsed.filename_title or author or "Resume"
+        logger.info(
+            f"Compiled PDF resume '{doc_name}': {page_count} page(s) ({len(buf.getvalue())} bytes)"
+        )
         buf.seek(0)
         return buf, page_count
 
@@ -517,6 +525,12 @@ class ResumeCompiler:
                     story.append(Paragraph(escape(line.strip()), styles["paragraph"]))
 
         doc.build(story)
+        page_count = int(getattr(doc, "page", 1))
+        size_bytes = len(buf.getvalue())
+        logger.info(
+            f"Compiled PDF cover letter '{display_title}': "
+            f"{page_count} page(s) ({size_bytes} bytes)"
+        )
         buf.seek(0)
         return buf
 

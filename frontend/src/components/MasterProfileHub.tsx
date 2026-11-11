@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   BulletItem,
@@ -7,6 +7,7 @@ import {
   MasterProfile,
   SkillsMatrix,
 } from "../api";
+import { useAppStore } from "../store";
 
 interface MasterProfileHubProps {
   onNotify: (type: "success" | "error", message: string) => void;
@@ -38,10 +39,15 @@ function formatTagDisplay(tag: string): string {
 }
 
 export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
+  const fetchProfile = useAppStore((s) => s.fetchProfile);
+  const setProfileStore = useAppStore((s) => s.setProfile);
+
   const [profile, setProfile] = useState<MasterProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!useAppStore.getState().profileLoaded);
   const [savingProfile, setSavingProfile] = useState(false);
-  const [importing, setImporting] = useState(false);
+  const [uploadingResume, setUploadingResume] = useState(false);
+  const [isDraggingResume, setIsDraggingResume] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Personal & Contact state
   const [fullName, setFullName] = useState("");
@@ -76,10 +82,12 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
   const [newExpStart, setNewExpStart] = useState("");
   const [newExpEnd, setNewExpEnd] = useState("");
   const [newExpCurrent, setNewExpCurrent] = useState(false);
+  const [newExpAcademic, setNewExpAcademic] = useState(false);
   const [creatingExp, setCreatingExp] = useState(false);
 
   const hydrateFromProfile = (data: MasterProfile) => {
     setProfile(data);
+    setProfileStore(data);
     setFullName(data.full_name || "");
     setHeadline(data.headline || "");
     setSummaryBase(data.summary_base || "");
@@ -107,10 +115,9 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
   };
 
   useEffect(() => {
-    api
-      .getProfile()
+    fetchProfile()
       .then((data) => {
-        hydrateFromProfile(data);
+        if (data) hydrateFromProfile(data);
         setLoading(false);
       })
       .catch((err: Error) => {
@@ -123,7 +130,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
     setSavingProfile(true);
     try {
       const updated = await api.updateProfile({
-        full_name: fullName.trim() || "Candidate",
+        full_name: fullName.trim(),
         headline: headline.trim() || null,
         summary_base: summaryBase.trim() || null,
         contact_json: contact,
@@ -142,23 +149,35 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
     }
   };
 
-  const handleImportLegacy = async () => {
-    setImporting(true);
+  const handleResumeUpload = async (file: File) => {
+    const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+    const allowed = [".pdf", ".docx", ".md", ".txt"];
+    if (!allowed.includes(ext)) {
+      onNotify(
+        "error",
+        `Unsupported file type '${ext}'. Please upload a .pdf, .docx, .md, or .txt file.`
+      );
+      return;
+    }
+
+    setUploadingResume(true);
     try {
-      const res = await api.importLegacyProfile();
-      const fresh = await api.getProfile();
-      hydrateFromProfile(fresh);
+      const updated = await api.uploadResume(file);
+      hydrateFromProfile(updated);
       onNotify(
         "success",
-        `Imported ${res.experiences_count} roles and ${res.total_bullets} tagged bullets.`
+        `Resume parsed successfully! Extracted ${updated.experiences?.length || 0} experiences and updated profile.`
       );
     } catch (err) {
       onNotify(
         "error",
-        err instanceof Error ? err.message : "Legacy import failed"
+        err instanceof Error ? err.message : "Failed to parse and upload resume"
       );
     } finally {
-      setImporting(false);
+      setUploadingResume(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   };
 
@@ -230,6 +249,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
         start_date: newExpStart.trim() || null,
         end_date: newExpCurrent ? "Present" : newExpEnd.trim() || null,
         is_current: newExpCurrent,
+        is_academic: newExpAcademic,
         bullets_json: [
           {
             text: "Delivered backend services and scalable APIs.",
@@ -245,8 +265,10 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
       setNewExpStart("");
       setNewExpEnd("");
       setNewExpCurrent(false);
+      setNewExpAcademic(false);
       setShowNewExpForm(false);
       onNotify("success", `Added experience at ${created.company}.`);
+      void useAppStore.getState().fetchProfile(true);
     } catch (err) {
       onNotify(
         "error",
@@ -274,10 +296,12 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
         start_date: exp.start_date?.trim() || null,
         end_date: exp.end_date?.trim() || null,
         is_current: exp.is_current,
+        is_academic: Boolean(exp.is_academic),
         bullets_json: cleanedBullets,
       });
       updateLocalExp(exp.id, () => saved);
       onNotify("success", `Saved experience: ${saved.role} @ ${saved.company}`);
+      void useAppStore.getState().fetchProfile(true);
     } catch (err) {
       onNotify(
         "error",
@@ -293,6 +317,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
       await api.deleteExperience(id);
       setExperiences((prev) => prev.filter((e) => e.id !== id));
       onNotify("success", `Removed ${company} from Master Profile.`);
+      void useAppStore.getState().fetchProfile(true);
     } catch (err) {
       onNotify(
         "error",
@@ -386,22 +411,131 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
         <div className="hub-actions">
           <button
             type="button"
-            className="btn"
-            onClick={handleImportLegacy}
-            disabled={importing}
-          >
-            {importing ? "Importing..." : "Import Legacy Resume"}
-          </button>
-          <button
-            type="button"
             className="btn btn-primary"
             onClick={handleSaveProfile}
-            disabled={savingProfile}
+            disabled={savingProfile || uploadingResume}
           >
             {savingProfile ? "Saving Profile..." : "Save Profile & Skills"}
           </button>
         </div>
       </div>
+
+      {/* Resume Upload Dropzone */}
+      <section
+        className={`panel ${isDraggingResume ? "drag-over" : ""}`}
+        style={{
+          border: isDraggingResume
+            ? "2px dashed var(--accent)"
+            : "2px dashed var(--border-subtle)",
+          backgroundColor: isDraggingResume
+            ? "var(--accent-tint)"
+            : "var(--bg-surface)",
+          padding: "1.5rem",
+          borderRadius: "8px",
+          textAlign: "center",
+          transition: "border-color 0.15s ease, background-color 0.15s ease",
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!uploadingResume) setIsDraggingResume(true);
+        }}
+        onDragLeave={() => setIsDraggingResume(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDraggingResume(false);
+          if (!uploadingResume && e.dataTransfer.files?.[0]) {
+            handleResumeUpload(e.dataTransfer.files[0]);
+          }
+        }}
+        aria-label="Upload resume document"
+      >
+        <input
+          type="file"
+          ref={fileInputRef}
+          style={{ display: "none" }}
+          accept=".pdf,.docx,.md,.txt"
+          onChange={(e) => {
+            if (e.target.files?.[0]) {
+              handleResumeUpload(e.target.files[0]);
+            }
+          }}
+        />
+
+        {uploadingResume ? (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "0.75rem",
+              padding: "0.5rem 0",
+            }}
+          >
+            <div
+              className="spinner"
+              style={{
+                width: "2rem",
+                height: "2rem",
+                border: "3px solid var(--border-subtle)",
+                borderTopColor: "var(--accent)",
+                borderRadius: "50%",
+              }}
+            />
+            <div style={{ fontWeight: 600, color: "var(--accent)" }}>
+              Extraindo texto e estruturando perfil...
+            </div>
+            <div style={{ fontSize: "0.85rem", color: "var(--ink-secondary)" }}>
+              A IA está analisando seu currículo e mapeando contatos, habilidades e experiências.
+            </div>
+          </div>
+        ) : (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "0.5rem",
+            }}
+          >
+            <div style={{ fontSize: "1rem", fontWeight: 600 }}>
+              Ingestão Inteligente de Currículo
+            </div>
+            <p
+              style={{
+                fontSize: "0.85rem",
+                color: "var(--ink-secondary)",
+                margin: 0,
+                maxWidth: "600px",
+              }}
+            >
+              Arraste e solte seu arquivo de currículo (.pdf, .docx, .md, .txt) aqui ou clique
+              no botão abaixo para estruturar automaticamente suas experiências e habilidades.
+            </p>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "1rem",
+                marginTop: "0.5rem",
+              }}
+            >
+              <button
+                type="button"
+                className="btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingResume}
+              >
+                Selecionar Arquivo
+              </button>
+              <span
+                style={{ fontSize: "0.75rem", color: "var(--ink-secondary)" }}
+              >
+                Formatos aceitos: PDF, DOCX, Markdown, TXT (máx. 10MB)
+              </span>
+            </div>
+          </div>
+        )}
+      </section>
 
       <div className="hub-grid">
         {/* 1. Contact & Personal Information Card */}
@@ -429,7 +563,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                 className="input"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="Davi Bernardes Machado"
+                placeholder="ex: Jane Doe"
               />
             </div>
 
@@ -782,7 +916,13 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
               </div>
               <div
                 className="field"
-                style={{ justifyContent: "flex-end", paddingBottom: "0.4rem" }}
+                style={{
+                  justifyContent: "flex-end",
+                  paddingBottom: "0.4rem",
+                  flexDirection: "row",
+                  gap: "1rem",
+                  alignItems: "center",
+                }}
               >
                 <label
                   style={{
@@ -799,6 +939,22 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                     onChange={(e) => setNewExpCurrent(e.target.checked)}
                   />
                   Current Role
+                </label>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    fontSize: "0.875rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={newExpAcademic}
+                    onChange={(e) => setNewExpAcademic(e.target.checked)}
+                  />
+                  Projeto Acadêmico
                 </label>
               </div>
             </div>
@@ -841,9 +997,34 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                       onClick={() => toggleAccordion(exp.id)}
                     >
                       <div className="accordion-summary">
-                        <span className="accordion-role">
-                          {exp.role} · {exp.company}
-                        </span>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.5rem",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <span className="accordion-role">
+                            {exp.role} · {exp.company}
+                          </span>
+                          {exp.is_academic && (
+                            <span
+                              className="status-pill"
+                              style={{
+                                fontSize: "0.7rem",
+                                fontWeight: 600,
+                                padding: "0.1rem 0.45rem",
+                                backgroundColor:
+                                  "var(--accent-tint, rgba(99, 102, 241, 0.15))",
+                                color: "var(--accent, #6366f1)",
+                                borderColor: "var(--accent, #6366f1)",
+                              }}
+                            >
+                              Projeto Acadêmico
+                            </span>
+                          )}
+                        </div>
                         <span className="accordion-meta">
                           {dateRange}
                           {exp.location ? ` · ${exp.location}` : ""} ·{" "}
@@ -965,6 +1146,9 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                           style={{
                             justifyContent: "flex-end",
                             paddingBottom: "0.4rem",
+                            flexDirection: "row",
+                            gap: "1rem",
+                            alignItems: "center",
                           }}
                         >
                           <label
@@ -987,6 +1171,27 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                               }
                             />
                             Currently working here
+                          </label>
+                          <label
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.5rem",
+                              fontSize: "0.875rem",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={Boolean(exp.is_academic)}
+                              onChange={(e) =>
+                                updateLocalExp(exp.id, (cur) => ({
+                                  ...cur,
+                                  is_academic: e.target.checked,
+                                }))
+                              }
+                            />
+                            Projeto Acadêmico
                           </label>
                         </div>
                       </div>

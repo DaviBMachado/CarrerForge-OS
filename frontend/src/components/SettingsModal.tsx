@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api, LLMProvider, SystemSettings } from "../api";
+import { AppLanguage, useTranslation } from "../i18n";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -21,6 +22,8 @@ export function SettingsModal({
   onClose,
   onSaved,
 }: SettingsModalProps) {
+  const { language, setLanguage, t } = useTranslation();
+  const [formLanguage, setFormLanguage] = useState<AppLanguage>(language);
   const [form, setForm] = useState<SystemSettings>({
     active_provider: "gemini",
     gemini_api_key: "",
@@ -41,6 +44,9 @@ export function SettingsModal({
   const selectRef = useRef<HTMLSelectElement | null>(null);
 
   useEffect(() => {
+    if (isOpen) {
+      setFormLanguage(language);
+    }
     if (isOpen && initialSettings) {
       setForm({
         active_provider: initialSettings.active_provider,
@@ -57,7 +63,7 @@ export function SettingsModal({
       setVisibleKeys({});
       setTimeout(() => selectRef.current?.focus(), 20);
     }
-  }, [isOpen, initialSettings]);
+  }, [isOpen, initialSettings, language]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -127,6 +133,9 @@ export function SettingsModal({
         scraper_headless: form.scraper_headless,
         scraper_timeout: Number(form.scraper_timeout) || 30,
       });
+      if (formLanguage !== language) {
+        setLanguage(formLanguage);
+      }
       onSaved(updated);
       onClose();
     } catch (err) {
@@ -164,9 +173,13 @@ export function SettingsModal({
             type="button"
             className="btn btn-sm"
             onClick={() => toggleVisibility(keyName)}
-            aria-label={isVisible ? `Hide ${label}` : `Show ${label}`}
+            aria-label={
+              isVisible
+                ? `${t("settings.hide")} ${label}`
+                : `${t("settings.show")} ${label}`
+            }
           >
-            {isVisible ? "Hide" : "Show"}
+            {isVisible ? t("settings.hide") : t("settings.show")}
           </button>
         </div>
       </div>
@@ -188,7 +201,7 @@ export function SettingsModal({
       >
         <div className="panel-header">
           <h2 id="settings-modal-title" className="panel-title">
-            System Settings & LLM Providers
+            {t("settings.title")}
           </h2>
           <button
             type="button"
@@ -205,8 +218,23 @@ export function SettingsModal({
           style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}
         >
           <div className="field">
+            <label className="field-label" htmlFor="setting-language">
+              {t("settings.language")}
+            </label>
+            <select
+              id="setting-language"
+              className="select"
+              value={formLanguage}
+              onChange={(e) => setFormLanguage(e.target.value as AppLanguage)}
+            >
+              <option value="en">English (EN)</option>
+              <option value="pt-BR">Português (pt-BR)</option>
+            </select>
+          </div>
+
+          <div className="field">
             <label className="field-label" htmlFor="setting-active-provider">
-              Active LLM Provider
+              {t("settings.activeProvider")}
             </label>
             <select
               ref={selectRef}
@@ -230,23 +258,23 @@ export function SettingsModal({
 
           {renderSecretField(
             "gemini_api_key",
-            "Gemini API Key",
+            t("settings.geminiKey"),
             "AIzaSy... (stored locally)"
           )}
           {renderSecretField(
             "openai_api_key",
-            "OpenAI API Key",
+            t("settings.openaiKey"),
             "sk-... (stored locally)"
           )}
           {renderSecretField(
             "anthropic_api_key",
-            "Anthropic Claude API Key",
+            t("settings.anthropicKey"),
             "sk-ant-... (stored locally)"
           )}
 
           <div className="field">
             <label className="field-label" htmlFor="setting-ollama-url">
-              Ollama Base URL
+              {t("settings.ollamaUrl")}
             </label>
             <input
               id="setting-ollama-url"
@@ -266,7 +294,7 @@ export function SettingsModal({
           <div className="form-grid">
             <div className="field">
               <label className="field-label" htmlFor="setting-scraper-timeout">
-                Scraper Timeout (seconds)
+                {t("settings.timeout")}
               </label>
               <input
                 id="setting-scraper-timeout"
@@ -307,7 +335,7 @@ export function SettingsModal({
                     }))
                   }
                 />
-                Run Scraper in Headless Mode
+                {t("settings.headless")}
               </label>
             </div>
           </div>
@@ -362,7 +390,7 @@ export function SettingsModal({
               onClick={handleTestConnection}
               disabled={testing || saving}
             >
-              {testing ? "Testing..." : "Test Connection"}
+              {testing ? t("settings.testing") : t("settings.testConnection")}
             </button>
 
             <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -372,10 +400,10 @@ export function SettingsModal({
                 onClick={onClose}
                 disabled={saving}
               >
-                Cancel
+                {t("settings.cancel")}
               </button>
               <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? "Saving..." : "Save Settings"}
+                {saving ? t("settings.saving") : t("settings.save")}
               </button>
             </div>
           </div>

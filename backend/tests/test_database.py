@@ -48,6 +48,18 @@ def test_table_creation(session: Session):
     }
     assert expected_tables.issubset(set(tables))
 
+    # Verify composite tenant indexes
+    for table_name, expected_index in [
+        ("master_profiles", "ix_master_profiles_user_id_id"),
+        ("job_postings", "ix_job_postings_user_id_id"),
+        ("experiences", "ix_experiences_user_id_id"),
+    ]:
+        indexes = inspector.get_indexes(table_name)
+        index_names = [idx["name"] for idx in indexes]
+        assert expected_index in index_names
+        idx_def = next(idx for idx in indexes if idx["name"] == expected_index)
+        assert idx_def["column_names"] == ["user_id", "id"]
+
 
 def test_user_email_validation(session: Session):
     # Optional / None email
@@ -182,7 +194,14 @@ def test_job_posting_and_tailored_artifact_cascade(session: Session):
 
 
 def test_system_settings(session: Session):
+    user = User(email="settings_test@example.com")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    assert user.id is not None
+
     setting = SystemSetting(
+        user_id=user.id,
         key="OPENAI_API_KEY",
         value_encrypted_or_plain="sk-test-secret-value",
         updated_at=datetime.now(UTC),
@@ -191,10 +210,24 @@ def test_system_settings(session: Session):
     session.commit()
 
     retrieved = session.exec(
-        select(SystemSetting).where(SystemSetting.key == "OPENAI_API_KEY")
+        select(SystemSetting).where(
+            SystemSetting.user_id == user.id,
+            SystemSetting.key == "OPENAI_API_KEY",
+        )
     ).first()
     assert retrieved is not None
     assert retrieved.value_encrypted_or_plain == "sk-test-secret-value"
+
+    # Verify cascade delete
+    session.delete(user)
+    session.commit()
+    deleted_setting = session.exec(
+        select(SystemSetting).where(
+            SystemSetting.user_id == user.id,
+            SystemSetting.key == "OPENAI_API_KEY",
+        )
+    ).first()
+    assert deleted_setting is None
 
 
 def test_get_db_generator():

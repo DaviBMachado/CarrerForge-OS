@@ -5,10 +5,16 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, col, select
 
+from backend.app.auth import CurrentUser
 from backend.app.db import get_db
 from backend.app.models import JobPosting
-from backend.app.routers.profile import get_or_create_default_profile
-from backend.app.services.browser_manager import get_session_status, launch_login_session
+from backend.app.services.browser_manager import (
+    close_interactive_session,
+    get_session_status,
+    launch_login_session,
+    open_interactive_session,
+    verify_interactive_session,
+)
 from backend.app.services.scrapers.runner import (
     RUNS,
     start_scraper_run,
@@ -38,13 +44,56 @@ def session_status() -> dict[str, Any]:
     return get_session_status()
 
 
+class SessionActionRequest(BaseModel):
+    platform: str | None = None
+
+
 @router.post("/session/login")
 async def session_login() -> dict[str, Any]:
     return await launch_login_session()
 
 
+@router.post("/session/open")
+async def session_open(
+    payload: SessionActionRequest | None = None,
+    platform: str | None = None,
+) -> dict[str, Any]:
+    target = (payload.platform if payload else None) or platform
+    return await open_interactive_session(target)
+
+
+@router.post("/session/verify")
+async def session_verify(
+    payload: SessionActionRequest | None = None,
+    platform: str | None = None,
+) -> dict[str, Any]:
+    target = (payload.platform if payload else None) or platform
+    res = await verify_interactive_session(target)
+    is_valid = (
+        res.get("platforms", {}).get(target, False) if target else res.get("authenticated", False)
+    )
+    if not is_valid:
+        detail_msg = (
+            f"Authentication not detected for {target}. "
+            "Please complete login in the opened browser."
+            if target
+            else "Authentication not detected. Please complete login in the opened browser."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail_msg,
+        )
+    return res
+
+
+@router.post("/session/close")
+async def session_close() -> dict[str, Any]:
+    return await close_interactive_session()
+
+
 @router.post("/start")
 async def start_scraper(
+    current_user: CurrentUser,
     payload: ScraperStartRequest | None = None,
     query: str | None = None,
     location: str | None = None,
@@ -52,12 +101,14 @@ async def start_scraper(
     max_jobs: int | None = None,
 ) -> dict[str, str]:
     req = payload or ScraperStartRequest()
+    assert current_user.id is not None
     run = await start_scraper_run(
         query=query if query is not None else req.query,
         location=location if location is not None else req.location,
         platforms=req.platforms,
         remote=remote if remote is not None else req.remote,
         max_jobs=max_jobs if max_jobs is not None else req.max_jobs,
+        user_id=current_user.id,
     )
     return {"run_id": run.run_id}
 
@@ -97,11 +148,10 @@ class JobStatusUpdateRequest(BaseModel):
 
 
 @router.get("/jobs", response_model=list[JobPosting])
-def list_scraped_jobs(session: DBSession) -> list[JobPosting]:
-    profile = get_or_create_default_profile(session)
+def list_scraped_jobs(session: DBSession, current_user: CurrentUser) -> list[JobPosting]:
     jobs = session.exec(
         select(JobPosting)
-        .where(JobPosting.user_id == profile.user_id)
+        .where(JobPosting.user_id == current_user.id)
         .order_by(col(JobPosting.id).desc())
     ).all()
     return list(jobs)
@@ -112,10 +162,10 @@ def update_job_status(
     job_id: int,
     payload: JobStatusUpdateRequest,
     session: DBSession,
+    current_user: CurrentUser,
 ) -> JobPosting:
-    profile = get_or_create_default_profile(session)
     job = session.get(JobPosting, job_id)
-    if not job or job.user_id != profile.user_id:
+    if not job or job.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Job posting not found",

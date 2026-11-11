@@ -9,12 +9,19 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from backend.app.models import JobPosting, TailoredArtifact, User
+from backend.app.models import Experience, JobPosting, MasterProfile, TailoredArtifact, User
 from backend.app.services.scrapers.base import ScrapedJob
 from backend.app.services.scrapers.deduplicator import compute_job_hash, upsert_scraped_jobs
 from backend.app.services.scrapers.gupy import parse_gupy_html, scrape_gupy_jobs
 from backend.app.services.scrapers.linkedin import parse_linkedin_html, scrape_linkedin_jobs
-from backend.app.services.scrapers.runner import RUNS, stop_scraper_run, stream_run_events
+from backend.app.services.scrapers.runner import (
+    MAX_STORED_RUNS,
+    RUNS,
+    ScraperRun,
+    evict_old_runs,
+    stop_scraper_run,
+    stream_run_events,
+)
 from backend.main import app
 
 LINKEDIN_SAMPLE_HTML = """
@@ -416,3 +423,169 @@ def test_scraper_jobs_list_and_archive_status_update():
         )
         assert patch_resp.status_code == 200
         assert patch_resp.json()["status"] == "archived"
+
+
+def test_scraper_tenant_isolation_and_ownership():
+    with TestClient(app) as client:
+        suffix = uuid.uuid4().hex[:8]
+        ext_id = f"gupy-tenant2-{suffix}"
+        fake_job = ScrapedJob(
+            platform="gupy",
+            external_id=ext_id,
+            title=f"Tenant2 Engineer {suffix}",
+            company="MultiTenant Corp",
+            location="Remote",
+            description="Tenant isolation check",
+            url="https://tenant.gupy.io/jobs/2",
+        )
+
+        async def fake_gupy_scrape(**kwargs):
+            return [fake_job]
+
+        with (
+            patch(
+                "backend.app.services.scrapers.runner.scrape_gupy_jobs",
+                side_effect=fake_gupy_scrape,
+            ),
+            patch(
+                "backend.app.services.scrapers.runner.scrape_linkedin_jobs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            # User 2 initiates scraper run
+            start_resp = client.post(
+                "/api/scraper/start",
+                headers={"X-User-Id": "2"},
+                json={"query": "Tenant2", "platforms": ["gupy"]},
+            )
+            assert start_resp.status_code == 200
+            run_id = start_resp.json()["run_id"]
+            client.get(f"/api/scraper/stream/{run_id}")
+
+        # User 2 lists jobs: must contain the scraped job
+        resp_u2 = client.get("/api/scraper/jobs", headers={"X-User-Id": "2"})
+        assert resp_u2.status_code == 200
+        jobs_u2 = resp_u2.json()
+        target_u2 = next((j for j in jobs_u2 if j["external_id"] == ext_id), None)
+        assert target_u2 is not None
+        assert target_u2["user_id"] == 2
+
+        # User 1 (or default user) lists jobs: must NOT contain user 2's job
+        resp_u1 = client.get("/api/scraper/jobs", headers={"X-User-Id": "1"})
+        assert resp_u1.status_code == 200
+        jobs_u1 = resp_u1.json()
+        assert not any(j["external_id"] == ext_id for j in jobs_u1)
+
+        # User 1 attempts to update User 2's job: returns 404
+        patch_resp = client.patch(
+            f"/api/scraper/jobs/{target_u2['id']}/status",
+            headers={"X-User-Id": "1"},
+            json={"status": "archived"},
+        )
+        assert patch_resp.status_code == 404
+
+
+def test_scraper_runs_eviction_lifecycle():
+    RUNS.clear()
+
+    # Pre-populate RUNS with 10 completed runs
+    for i in range(10):
+        r_id = f"completed-run-{i}"
+        RUNS[r_id] = ScraperRun(run_id=r_id, done=True, status="completed")
+
+    assert len(RUNS) == MAX_STORED_RUNS
+
+    # Add an 11th run and invoke eviction to target capacity MAX_STORED_RUNS
+    r11_id = "completed-run-11"
+    RUNS[r11_id] = ScraperRun(run_id=r11_id, done=True, status="completed")
+    evict_old_runs(MAX_STORED_RUNS)
+
+    assert len(RUNS) == MAX_STORED_RUNS
+    # Oldest run should have been evicted
+    assert "completed-run-0" not in RUNS
+    # Newest run must still exist
+    assert "completed-run-11" in RUNS
+
+
+def test_active_runs_protected_from_eviction():
+    RUNS.clear()
+
+    # 5 active runs, 5 completed runs
+    for i in range(5):
+        active_id = f"active-{i}"
+        RUNS[active_id] = ScraperRun(run_id=active_id, done=False, status="running")
+
+    for i in range(5):
+        done_id = f"done-{i}"
+        RUNS[done_id] = ScraperRun(run_id=done_id, done=True, status="completed")
+
+    assert len(RUNS) == 10
+
+    # Evict to capacity 6: should only evict from done runs
+    evict_old_runs(target_cap=6)
+
+    assert len(RUNS) == 6
+    # All 5 active runs must still be present
+    for i in range(5):
+        assert f"active-{i}" in RUNS
+    # 4 done runs evicted, 1 remaining
+    assert sum(1 for r in RUNS.values() if r.done) == 1
+
+
+def test_upsert_scraped_jobs_calculates_and_persists_match_percentage(session: Session):
+    user = User(email="match_user@example.com")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    assert user.id is not None
+
+    # Profile with python and fastapi
+    profile = MasterProfile(
+        user_id=user.id,
+        full_name="Match Tester",
+        headline="Python Backend Developer",
+        skills_json={"Backend": ["Python", "FastAPI"]},
+    )
+    session.add(profile)
+    session.commit()
+    session.refresh(profile)
+    assert profile.id is not None
+
+    exp = Experience(
+        user_id=user.id,
+        profile_id=profile.id,
+        company="TechCorp",
+        role="Backend Engineer",
+        bullets_json=[{"text": "Engineered REST APIs using Python and FastAPI"}],
+    )
+    session.add(exp)
+    session.commit()
+
+    # Job A requires Python and FastAPI (100% match)
+    job_a = ScrapedJob(
+        platform="linkedin",
+        external_id="match-100",
+        title="Python Engineer",
+        company="PyCorp",
+        description="We require Python and FastAPI for microservices.",
+    )
+
+    # Job B requires Python, FastAPI, Kubernetes, and Go (50% match: 2 out of 4)
+    # wait: Go isn't in vocab, 'golang' and 'docker' and 'kubernetes' are
+    job_b = ScrapedJob(
+        platform="gupy",
+        external_id="match-50",
+        title="Senior Cloud Engineer",
+        company="CloudCorp",
+        description="We require Python, FastAPI, Docker, and Kubernetes.",
+    )
+
+    saved = upsert_scraped_jobs(session, user.id, [job_a, job_b])
+    assert len(saved) == 2
+
+    saved_a = next(j for j in saved if j.external_id == "match-100")
+    saved_b = next(j for j in saved if j.external_id == "match-50")
+
+    assert saved_a.match_percentage == 100
+    assert saved_b.match_percentage == 50
