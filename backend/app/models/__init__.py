@@ -78,6 +78,7 @@ class Experience(SQLModel, table=True):
     start_date: str | None = None
     end_date: str | None = None
     is_current: bool = Field(default=False)
+    is_academic: bool = Field(default=False)
     bullets_json: list[dict[str, Any]] | None = Field(default=None, sa_type=JSON)
 
     user: User | None = Relationship(back_populates="experiences")
@@ -101,6 +102,7 @@ class JobPosting(SQLModel, table=True):
     cleaned_text: str | None = None
     language: str = Field(default="en")
     status: str = Field(default="discovered", index=True)
+    match_percentage: int | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     user: User | None = Relationship(back_populates="job_postings")

@@ -24,6 +24,7 @@ class ExperienceBase(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     is_current: bool = False
+    is_academic: bool = False
     bullets_json: list[BulletItem] = Field(default_factory=list)
 
 
@@ -38,6 +39,7 @@ class ExperienceUpdate(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     is_current: bool | None = None
+    is_academic: bool | None = None
     bullets_json: list[BulletItem] | None = None
 
 

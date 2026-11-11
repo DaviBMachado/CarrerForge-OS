@@ -155,9 +155,6 @@ export function App() {
 
         <div className="topbar-actions">
           <div className="status-pill" title={t("topbar.language")}>
-            <span style={{ fontSize: "0.75rem", fontWeight: 600 }}>
-              {language === "pt-BR" ? "PT" : "EN"}
-            </span>
             <select
               aria-label={t("topbar.language")}
               value={language}

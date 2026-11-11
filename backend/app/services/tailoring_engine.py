@@ -136,23 +136,24 @@ class TailoringResult(BaseModel):
     cover_letter_text: str
 
 
+class SolveQuestionResponse(BaseModel):
+    question: str
+    answer: str
+    language: TargetLanguage
+    grounded_experiences: list[str] = Field(default_factory=list)
+
+
 class GupyRundown(BaseModel):
     short_bio: str
     impact_metrics: list[str] = Field(default_factory=list)
     prioritized_skill_tags: list[str] = Field(default_factory=list)
     language: TargetLanguage
     selected_persona: str
+    screening_qa: list[SolveQuestionResponse] = Field(default_factory=list)
 
 
 class SolveQuestionRequest(BaseModel):
     question: str = Field(min_length=2)
-
-
-class SolveQuestionResponse(BaseModel):
-    question: str
-    answer: str
-    language: TargetLanguage
-    grounded_experiences: list[str] = Field(default_factory=list)
 
 
 def _tokenize_lower(text: str) -> set[str]:
@@ -336,7 +337,13 @@ def build_tailoring_system_prompt(
         "sections[{title, blocks[{type, text}]}]) and "
         "'cover_letter' (string with 3 paragraphs separated by '\\n\\n').\n"
         "   Allowed block types: 'paragraph' (summary), 'subheading' (Role | Company (Dates)), "
-        "'bullet' (impact achievement), 'skillline' (**Category:** skills)."
+        "'bullet' (impact achievement), 'skillline' (**Category:** skills).\n"
+        "10. Strict distinction between Commercial Experience and Academic Projects: "
+        "differentiate formal employment/corporate roles (is_academic: false) from academic "
+        "research/thesis/capstone projects (is_academic: true). Do NOT present university "
+        "or academic projects as commercial corporate employment. Position academic projects "
+        "truthfully and accurately under an Academic & Research Projects section rather than "
+        "conflating them with commercial industry positions."
     )
 
 
@@ -359,6 +366,7 @@ def _serialize_profile_for_prompt(
                 "start_date": exp.start_date,
                 "end_date": exp.end_date,
                 "is_current": exp.is_current,
+                "is_academic": exp.is_academic,
                 "bullets": exp.bullets_json or [],
             }
             for exp in experiences
@@ -644,12 +652,22 @@ def generate_gupy_rundown(
     metrics = _extract_impact_metrics(experiences)
     skills = _extract_prioritized_skills(profile, experiences, grounded_keywords)
 
+    saved_qa: list[SolveQuestionResponse] = []
+    if artifact and isinstance(artifact.gupy_qa_json, list):
+        for item in artifact.gupy_qa_json:
+            if isinstance(item, dict):
+                try:
+                    saved_qa.append(SolveQuestionResponse(**item))
+                except Exception:
+                    pass
+
     rundown = GupyRundown(
         short_bio=short_bio,
         impact_metrics=metrics,
         prioritized_skill_tags=skills,
         language=language,
         selected_persona=artifact.selected_persona or persona,
+        screening_qa=saved_qa,
     )
 
     artifact.gupy_rundown_json = rundown.model_dump()
@@ -695,6 +713,19 @@ def solve_screening_question(
     clean_q = (question or "").strip()
     if not clean_q:
         raise ValueError("Question must not be empty.")
+
+    clean_q_lower = clean_q.lower()
+    artifact = session.exec(
+        select(TailoredArtifact).where(TailoredArtifact.job_id == job.id)
+    ).first()
+
+    if artifact and isinstance(artifact.gupy_qa_json, list):
+        for item in artifact.gupy_qa_json:
+            if (
+                isinstance(item, dict)
+                and str(item.get("question", "")).strip().lower() == clean_q_lower
+            ):
+                return SolveQuestionResponse(**item)
 
     experiences = list(
         session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
@@ -768,7 +799,11 @@ def solve_screening_question(
     if artifact is None:
         artifact = TailoredArtifact(job_id=job.id, selected_persona=persona)
 
-    history = list(artifact.gupy_qa_json) if isinstance(artifact.gupy_qa_json, list) else []
+    history = [
+        item
+        for item in (artifact.gupy_qa_json if isinstance(artifact.gupy_qa_json, list) else [])
+        if isinstance(item, dict) and str(item.get("question", "")).strip().lower() != clean_q_lower
+    ]
     history.append(response.model_dump())
     artifact.gupy_qa_json = history
     session.add(artifact)

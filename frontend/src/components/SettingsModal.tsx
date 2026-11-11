@@ -23,6 +23,7 @@ export function SettingsModal({
   onSaved,
 }: SettingsModalProps) {
   const { language, setLanguage, t } = useTranslation();
+  const [formLanguage, setFormLanguage] = useState<AppLanguage>(language);
   const [form, setForm] = useState<SystemSettings>({
     active_provider: "gemini",
     gemini_api_key: "",
@@ -43,6 +44,9 @@ export function SettingsModal({
   const selectRef = useRef<HTMLSelectElement | null>(null);
 
   useEffect(() => {
+    if (isOpen) {
+      setFormLanguage(language);
+    }
     if (isOpen && initialSettings) {
       setForm({
         active_provider: initialSettings.active_provider,
@@ -59,7 +63,7 @@ export function SettingsModal({
       setVisibleKeys({});
       setTimeout(() => selectRef.current?.focus(), 20);
     }
-  }, [isOpen, initialSettings]);
+  }, [isOpen, initialSettings, language]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -129,6 +133,9 @@ export function SettingsModal({
         scraper_headless: form.scraper_headless,
         scraper_timeout: Number(form.scraper_timeout) || 30,
       });
+      if (formLanguage !== language) {
+        setLanguage(formLanguage);
+      }
       onSaved(updated);
       onClose();
     } catch (err) {
@@ -166,9 +173,13 @@ export function SettingsModal({
             type="button"
             className="btn btn-sm"
             onClick={() => toggleVisibility(keyName)}
-            aria-label={isVisible ? `Hide ${label}` : `Show ${label}`}
+            aria-label={
+              isVisible
+                ? `${t("settings.hide")} ${label}`
+                : `${t("settings.show")} ${label}`
+            }
           >
-            {isVisible ? "Hide" : "Show"}
+            {isVisible ? t("settings.hide") : t("settings.show")}
           </button>
         </div>
       </div>
@@ -213,8 +224,8 @@ export function SettingsModal({
             <select
               id="setting-language"
               className="select"
-              value={language}
-              onChange={(e) => setLanguage(e.target.value as AppLanguage)}
+              value={formLanguage}
+              onChange={(e) => setFormLanguage(e.target.value as AppLanguage)}
             >
               <option value="en">English (EN)</option>
               <option value="pt-BR">Português (pt-BR)</option>
@@ -247,23 +258,23 @@ export function SettingsModal({
 
           {renderSecretField(
             "gemini_api_key",
-            "Gemini API Key",
+            t("settings.geminiKey"),
             "AIzaSy... (stored locally)"
           )}
           {renderSecretField(
             "openai_api_key",
-            "OpenAI API Key",
+            t("settings.openaiKey"),
             "sk-... (stored locally)"
           )}
           {renderSecretField(
             "anthropic_api_key",
-            "Anthropic Claude API Key",
+            t("settings.anthropicKey"),
             "sk-ant-... (stored locally)"
           )}
 
           <div className="field">
             <label className="field-label" htmlFor="setting-ollama-url">
-              Ollama Base URL
+              {t("settings.ollamaUrl")}
             </label>
             <input
               id="setting-ollama-url"

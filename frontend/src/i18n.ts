@@ -28,6 +28,23 @@ export const translations = {
     "settings.cancel": "Cancel",
     "settings.headless": "Run Scraper in Headless Mode",
     "settings.timeout": "Scraper Timeout (seconds)",
+    "settings.geminiKey": "Gemini API Key",
+    "settings.openaiKey": "OpenAI API Key",
+    "settings.anthropicKey": "Anthropic Claude API Key",
+    "settings.ollamaUrl": "Ollama Base URL",
+    "settings.show": "Show",
+    "settings.hide": "Hide",
+
+    // Studio & Badges
+    "studio.modality": "Modality: {type}",
+    "studio.unspecified": "Unspecified",
+    "studio.status": "Status: {status}",
+    "studio.shortDescription": "Short description ({count} words)",
+    "studio.wordCount": "{count} words",
+    "studio.jobDescription": "Job Description",
+    "studio.noJobDescription": "No job description available.",
+    "studio.noResumeContent": "No resume content to display in preview.",
+    "studio.generatingPreview": "Generating PDF preview...",
 
     // Common & Status
     "common.save": "Save",
@@ -80,6 +97,23 @@ export const translations = {
     "settings.cancel": "Cancelar",
     "settings.headless": "Executar Scraper em Modo Headless",
     "settings.timeout": "Timeout do Scraper (segundos)",
+    "settings.geminiKey": "Chave de API do Gemini",
+    "settings.openaiKey": "Chave de API da OpenAI",
+    "settings.anthropicKey": "Chave de API do Anthropic Claude",
+    "settings.ollamaUrl": "URL Base do Ollama",
+    "settings.show": "Exibir",
+    "settings.hide": "Ocultar",
+
+    // Studio & Badges
+    "studio.modality": "Modalidade: {type}",
+    "studio.unspecified": "Não especificada",
+    "studio.status": "Status: {status}",
+    "studio.shortDescription": "Descrição curta ({count} palavras)",
+    "studio.wordCount": "{count} palavras",
+    "studio.jobDescription": "Descrição da Vaga",
+    "studio.noJobDescription": "Nenhuma descrição disponível para esta vaga.",
+    "studio.noResumeContent": "Nenhum conteúdo de currículo para exibir na prévia.",
+    "studio.generatingPreview": "Gerando pré-visualização em PDF...",
 
     // Common & Status
     "common.save": "Salvar",

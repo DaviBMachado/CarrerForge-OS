@@ -26,7 +26,18 @@ class ScraperRun:
 
 
 # shortcut: in-memory run registry for single-process runner, upgrade to Redis if multi-worker
+MAX_STORED_RUNS: int = 10
 RUNS: dict[str, ScraperRun] = {}
+
+
+def evict_old_runs(target_cap: int = MAX_STORED_RUNS) -> None:
+    """Evict oldest finished runs in FIFO order so RUNS does not exceed target_cap."""
+    excess = len(RUNS) - target_cap
+    if excess <= 0:
+        return
+    done_keys = [k for k, r in RUNS.items() if r.done]
+    for k in done_keys[:excess]:
+        RUNS.pop(k, None)
 
 
 async def _emit(
@@ -156,6 +167,7 @@ async def _execute_run(
         await _emit(run, f"Error: {exc}", status="failed")
     finally:
         run.done = True
+        evict_old_runs(MAX_STORED_RUNS)
         async with run.condition:
             run.condition.notify_all()
 
@@ -168,6 +180,7 @@ async def start_scraper_run(
     max_jobs: int = DEFAULT_BATCH_CAP,
     user_id: int = 1,
 ) -> ScraperRun:
+    evict_old_runs(MAX_STORED_RUNS - 1)
     run_id = uuid.uuid4().hex
     run = ScraperRun(run_id=run_id)
     RUNS[run_id] = run
@@ -209,6 +222,7 @@ async def stop_scraper_run(run_id: str | None = None) -> ScraperRun | None:
     elif not target.done:
         target.done = True
         await _emit(target, "Scraper aborted.", status="stopped")
+        evict_old_runs(MAX_STORED_RUNS)
 
     return target
 

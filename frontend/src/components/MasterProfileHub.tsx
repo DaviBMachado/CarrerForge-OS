@@ -82,6 +82,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
   const [newExpStart, setNewExpStart] = useState("");
   const [newExpEnd, setNewExpEnd] = useState("");
   const [newExpCurrent, setNewExpCurrent] = useState(false);
+  const [newExpAcademic, setNewExpAcademic] = useState(false);
   const [creatingExp, setCreatingExp] = useState(false);
 
   const hydrateFromProfile = (data: MasterProfile) => {
@@ -248,6 +249,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
         start_date: newExpStart.trim() || null,
         end_date: newExpCurrent ? "Present" : newExpEnd.trim() || null,
         is_current: newExpCurrent,
+        is_academic: newExpAcademic,
         bullets_json: [
           {
             text: "Delivered backend services and scalable APIs.",
@@ -263,6 +265,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
       setNewExpStart("");
       setNewExpEnd("");
       setNewExpCurrent(false);
+      setNewExpAcademic(false);
       setShowNewExpForm(false);
       onNotify("success", `Added experience at ${created.company}.`);
       void useAppStore.getState().fetchProfile(true);
@@ -293,6 +296,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
         start_date: exp.start_date?.trim() || null,
         end_date: exp.end_date?.trim() || null,
         is_current: exp.is_current,
+        is_academic: Boolean(exp.is_academic),
         bullets_json: cleanedBullets,
       });
       updateLocalExp(exp.id, () => saved);
@@ -912,7 +916,13 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
               </div>
               <div
                 className="field"
-                style={{ justifyContent: "flex-end", paddingBottom: "0.4rem" }}
+                style={{
+                  justifyContent: "flex-end",
+                  paddingBottom: "0.4rem",
+                  flexDirection: "row",
+                  gap: "1rem",
+                  alignItems: "center",
+                }}
               >
                 <label
                   style={{
@@ -929,6 +939,22 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                     onChange={(e) => setNewExpCurrent(e.target.checked)}
                   />
                   Current Role
+                </label>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    fontSize: "0.875rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={newExpAcademic}
+                    onChange={(e) => setNewExpAcademic(e.target.checked)}
+                  />
+                  Projeto Acadêmico
                 </label>
               </div>
             </div>
@@ -971,9 +997,34 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                       onClick={() => toggleAccordion(exp.id)}
                     >
                       <div className="accordion-summary">
-                        <span className="accordion-role">
-                          {exp.role} · {exp.company}
-                        </span>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.5rem",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <span className="accordion-role">
+                            {exp.role} · {exp.company}
+                          </span>
+                          {exp.is_academic && (
+                            <span
+                              className="status-pill"
+                              style={{
+                                fontSize: "0.7rem",
+                                fontWeight: 600,
+                                padding: "0.1rem 0.45rem",
+                                backgroundColor:
+                                  "var(--accent-tint, rgba(99, 102, 241, 0.15))",
+                                color: "var(--accent, #6366f1)",
+                                borderColor: "var(--accent, #6366f1)",
+                              }}
+                            >
+                              Projeto Acadêmico
+                            </span>
+                          )}
+                        </div>
                         <span className="accordion-meta">
                           {dateRange}
                           {exp.location ? ` · ${exp.location}` : ""} ·{" "}
@@ -1095,6 +1146,9 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                           style={{
                             justifyContent: "flex-end",
                             paddingBottom: "0.4rem",
+                            flexDirection: "row",
+                            gap: "1rem",
+                            alignItems: "center",
                           }}
                         >
                           <label
@@ -1117,6 +1171,27 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                               }
                             />
                             Currently working here
+                          </label>
+                          <label
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.5rem",
+                              fontSize: "0.875rem",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={Boolean(exp.is_academic)}
+                              onChange={(e) =>
+                                updateLocalExp(exp.id, (cur) => ({
+                                  ...cur,
+                                  is_academic: e.target.checked,
+                                }))
+                              }
+                            />
+                            Projeto Acadêmico
                           </label>
                         </div>
                       </div>

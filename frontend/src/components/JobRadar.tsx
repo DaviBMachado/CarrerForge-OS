@@ -25,6 +25,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     "gupy",
   ]);
   const [remoteOnly, setRemoteOnly] = useState(false);
+  const [minMatchFilter, setMinMatchFilter] = useState(false);
 
   const [sessionStatus, setSessionStatus] =
     useState<ScraperSessionStatus | null>(null);
@@ -271,9 +272,18 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     }
   };
 
-  const visibleJobs = jobs.filter((j) =>
-    showArchived ? j.status === "archived" : j.status !== "archived"
-  );
+  const visibleJobs = jobs.filter((j) => {
+    const statusMatches = showArchived
+      ? j.status === "archived"
+      : j.status !== "archived";
+    if (!statusMatches) return false;
+    if (minMatchFilter) {
+      return (
+        typeof j.match_percentage === "number" && j.match_percentage >= 50
+      );
+    }
+    return true;
+  });
 
   return (
     <div className="radar-layout">
@@ -458,6 +468,20 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
 
           <div
             className="field"
+            style={{ flex: "0 0 auto", justifyContent: "flex-end" }}
+          >
+            <label className="checkbox-pill">
+              <input
+                type="checkbox"
+                checked={minMatchFilter}
+                onChange={(e) => setMinMatchFilter(e.target.checked)}
+              />
+              <span>Match &gt; 50%</span>
+            </label>
+          </div>
+
+          <div
+            className="field"
             style={{
               flex: "0 0 auto",
               flexDirection: "row",
@@ -542,11 +566,43 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
                     <h3 className="job-card-title">{job.title}</h3>
                     <div className="job-card-company">{job.company}</div>
                   </div>
-                  <span
-                    className={`platform-badge platform-${job.platform.toLowerCase()}`}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.35rem",
+                    }}
                   >
-                    {job.platform}
-                  </span>
+                    {typeof job.match_percentage === "number" && (
+                      <span
+                        className="status-pill"
+                        style={{
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          padding: "0.15rem 0.5rem",
+                          backgroundColor:
+                            job.match_percentage >= 50
+                              ? "var(--success-tint, rgba(16, 185, 129, 0.15))"
+                              : "var(--bg-subtle)",
+                          borderColor:
+                            job.match_percentage >= 50
+                              ? "var(--success, #10b981)"
+                              : "var(--border-subtle)",
+                          color:
+                            job.match_percentage >= 50
+                              ? "var(--success, #10b981)"
+                              : "var(--ink-secondary)",
+                        }}
+                      >
+                        {job.match_percentage}% match
+                      </span>
+                    )}
+                    <span
+                      className={`platform-badge platform-${job.platform.toLowerCase()}`}
+                    >
+                      {job.platform}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="job-card-meta">

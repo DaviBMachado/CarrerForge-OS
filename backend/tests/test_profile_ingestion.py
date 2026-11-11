@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, col, create_engine, select
 
 from backend.app.db import get_db
 from backend.app.models import Experience
@@ -191,3 +191,65 @@ def test_upload_endpoint_llm_failure(client: TestClient):
         )
         assert response.status_code == 502
         assert "LLM ingestion failed" in response.json()["detail"]
+
+
+def test_normalize_and_persist_academic_and_professional_separation(db_session: Session):
+    profile = get_or_create_default_profile(db_session)
+    assert profile.id is not None
+
+    raw_data = {
+        "full_name": "Lucas Aluno",
+        "headline": "Researcher & Software Engineer",
+        "professional_experiences": [
+            {
+                "company": "Enterprise Tech Corp",
+                "role": "Software Engineer",
+                "location": "São Paulo",
+                "start_date": "2022-01",
+                "end_date": "2024-05",
+                "is_current": False,
+                "bullets": [{"text": "Maintained high-throughput APIs", "tags": ["python"]}],
+            }
+        ],
+        "academic_projects": [
+            {
+                "company": "Universidade de São Paulo (USP)",
+                "role": "Pesquisador de Iniciação Científica",
+                "location": "São Paulo",
+                "start_date": "2020-02",
+                "end_date": "2021-12",
+                "is_current": False,
+                "bullets": [
+                    {
+                        "text": "Desenvolveu algoritmos de otimização para redes complexas.",
+                        "tags": ["python", "graph-theory"],
+                    }
+                ],
+            }
+        ],
+    }
+
+    normalized = normalize_parsed_profile(raw_data)
+    assert len(normalized["experiences"]) == 2
+
+    corp = next(e for e in normalized["experiences"] if e["company"] == "Enterprise Tech Corp")
+    acad = next(
+        e for e in normalized["experiences"] if e["company"] == "Universidade de São Paulo (USP)"
+    )
+
+    assert corp["is_academic"] is False
+    assert acad["is_academic"] is True
+
+    persist_profile_ingestion(db_session, profile, normalized)
+    db_session.refresh(profile)
+
+    exps = db_session.exec(
+        select(Experience)
+        .where(Experience.profile_id == profile.id)
+        .order_by(col(Experience.is_academic))
+    ).all()
+    assert len(exps) == 2
+    assert exps[0].company == "Enterprise Tech Corp"
+    assert exps[0].is_academic is False
+    assert exps[1].company == "Universidade de São Paulo (USP)"
+    assert exps[1].is_academic is True

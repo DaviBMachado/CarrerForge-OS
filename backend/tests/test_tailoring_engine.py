@@ -16,6 +16,7 @@ from backend.app.services.tailoring_engine import (
     FactualGuardrailError,
     build_tailoring_system_prompt,
     extract_ats_keywords,
+    generate_gupy_rundown,
     get_tailored_artifact,
     solve_screening_question,
     tailor_job_application,
@@ -556,3 +557,74 @@ def test_get_tailor_endpoint_and_spa_route_error(
             )
     finally:
         app.dependency_overrides.clear()
+
+
+def test_solve_screening_question_persistent_cache_hit(
+    session: Session,
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    _, profile, job = candidate_setup
+    update_settings(
+        session,
+        SettingsUpdate(active_provider="gemini", gemini_api_key="AIzaMockQAKey123"),
+    )
+
+    llm_call_count = 0
+
+    def mock_transport_handler(req: httpx.Request) -> httpx.Response:
+        nonlocal llm_call_count
+        llm_call_count += 1
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": json.dumps(
+                                        {
+                                            "answer": (
+                                                "Handled high load by scaling FastAPI workflows "
+                                                "with 10,000+ RPS at Itaú Unibanco."
+                                            ),
+                                            "grounded_experiences": ["Itaú Unibanco"],
+                                        }
+                                    )
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    orchestrator = LLMOrchestrator(
+        session,
+        http_client=httpx.Client(transport=httpx.MockTransport(mock_transport_handler)),
+    )
+
+    q = "How do you handle ambiguous requirements and scale workflows?"
+
+    # 1. First call: executes LLM and caches
+    res1 = solve_screening_question(session, job, profile, question=q, orchestrator=orchestrator)
+    assert llm_call_count == 1
+    assert "10,000+" in res1.answer
+
+    # 2. Second call with varied casing and whitespace: hit cache without invoking LLM
+    res2 = solve_screening_question(
+        session,
+        job,
+        profile,
+        question=f"  {q.upper()}  ",
+        orchestrator=orchestrator,
+    )
+    assert llm_call_count == 1
+    assert res2.answer == res1.answer
+    assert res2.grounded_experiences == res1.grounded_experiences
+
+    # 3. Verify rundown exposure
+    rundown = generate_gupy_rundown(session, job, profile)
+    assert len(rundown.screening_qa) == 1
+    assert rundown.screening_qa[0].question == q
+    assert rundown.screening_qa[0].answer == res1.answer

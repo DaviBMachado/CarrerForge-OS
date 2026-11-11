@@ -12,6 +12,7 @@ import {
 } from "../api";
 import { base64ToPdfBlob } from "./GeneralResumeBuilder";
 import { useAppStore } from "../store";
+import { useTranslation } from "../i18n";
 
 interface TailoringStudioProps {
   selectedJob: JobPostingItem | null;
@@ -101,22 +102,46 @@ function profileToInitialSpec(
   }
 
   if (profile.experiences && profile.experiences.length > 0) {
-    const expBlocks: ResumeBlock[] = [];
-    for (const exp of profile.experiences) {
-      const period = [exp.start_date, exp.is_current ? "Present" : exp.end_date]
-        .filter(Boolean)
-        .join(" - ");
-      expBlocks.push({
-        type: "subheading",
-        text: `${exp.role} | ${exp.company}${period ? ` (${period})` : ""}`,
-      });
-      for (const b of exp.bullets_json || []) {
-        if (b.text.trim()) {
-          expBlocks.push({ type: "bullet", text: b.text.trim() });
+    const profExps = profile.experiences.filter((e) => !e.is_academic);
+    const acadExps = profile.experiences.filter((e) => e.is_academic);
+
+    if (profExps.length > 0) {
+      const expBlocks: ResumeBlock[] = [];
+      for (const exp of profExps) {
+        const period = [exp.start_date, exp.is_current ? "Present" : exp.end_date]
+          .filter(Boolean)
+          .join(" - ");
+        expBlocks.push({
+          type: "subheading",
+          text: `${exp.role} | ${exp.company}${period ? ` (${period})` : ""}`,
+        });
+        for (const b of exp.bullets_json || []) {
+          if (b.text.trim()) {
+            expBlocks.push({ type: "bullet", text: b.text.trim() });
+          }
         }
       }
+      sections.push({ title: "Professional Experience", blocks: expBlocks });
     }
-    sections.push({ title: "Professional Experience", blocks: expBlocks });
+
+    if (acadExps.length > 0) {
+      const acadBlocks: ResumeBlock[] = [];
+      for (const exp of acadExps) {
+        const period = [exp.start_date, exp.is_current ? "Present" : exp.end_date]
+          .filter(Boolean)
+          .join(" - ");
+        acadBlocks.push({
+          type: "subheading",
+          text: `${exp.role} | ${exp.company}${period ? ` (${period})` : ""}`,
+        });
+        for (const b of exp.bullets_json || []) {
+          if (b.text.trim()) {
+            acadBlocks.push({ type: "bullet", text: b.text.trim() });
+          }
+        }
+      }
+      sections.push({ title: "Academic & Research Projects", blocks: acadBlocks });
+    }
   }
 
   const name = profile.full_name || "";
@@ -174,6 +199,7 @@ export function TailoringStudio({
   const profile = useAppStore((s) => s.profile);
   const fetchJobs = useAppStore((s) => s.fetchJobs);
   const fetchProfile = useAppStore((s) => s.fetchProfile);
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<StudioTab>("resume");
 
   const [persona, setPersona] = useState<string>(() => profile?.headline || "");
@@ -247,7 +273,15 @@ export function TailoringStudio({
 
   // Sync job-specific rundown, existing tailored artifact, and baseline keywords when selectedJob changes
   useEffect(() => {
-    if (!selectedJob) return;
+    if (!selectedJob) {
+      setRundown(null);
+      setQaHistory([]);
+      setQuestionInput("");
+      return;
+    }
+    setRundown(null);
+    setQaHistory([]);
+    setQuestionInput("");
     const jobText = selectedJob.cleaned_text || selectedJob.raw_description || "";
     const local = deriveLocalKeywords(jobText, profile);
     setAtsKeywords(local.keywords);
@@ -282,11 +316,17 @@ export function TailoringStudio({
       .getGupyRundown(selectedJob.id)
       .then((data) => {
         setRundown(data);
+        if (data.screening_qa && data.screening_qa.length > 0) {
+          setQaHistory(data.screening_qa.slice().reverse());
+        } else {
+          setQaHistory([]);
+        }
         if (data.selected_persona) setPersona(data.selected_persona);
         if (data.language) setLanguage(data.language);
       })
       .catch(() => {
-        // Fallback if rundown cannot be fetched
+        setRundown(null);
+        setQaHistory([]);
       });
   }, [selectedJob?.id, profile]);
 
@@ -384,7 +424,12 @@ export function TailoringStudio({
       // Refresh Gupy rundown with newly tailored summary
       api
         .getGupyRundown(selectedJob.id)
-        .then((r) => setRundown(r))
+        .then((r) => {
+          setRundown(r);
+          if (r.screening_qa && r.screening_qa.length > 0) {
+            setQaHistory(r.screening_qa.slice().reverse());
+          }
+        })
         .catch(() => {});
 
       onNotify(
@@ -415,7 +460,13 @@ export function TailoringStudio({
     setSolvingQuestion(true);
     try {
       const res = await api.solveQuestion(selectedJob.id, q);
-      setQaHistory((prev) => [res, ...prev]);
+      setQaHistory((prev) => [
+        res,
+        ...prev.filter(
+          (item) =>
+            item.question.trim().toLowerCase() !== res.question.trim().toLowerCase()
+        ),
+      ]);
       setQuestionInput("");
       onNotify("success", "Drafted grounded screening answer.");
     } catch (err) {
@@ -683,13 +734,16 @@ export function TailoringStudio({
                         className="status-pill"
                         style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem" }}
                       >
-                        Modalidade: {selectedJob.remote_type || "Não especificada"}
+                        {t("studio.modality", {
+                          type:
+                            selectedJob.remote_type || t("studio.unspecified"),
+                        })}
                       </span>
                       <span
                         className="status-pill"
                         style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem" }}
                       >
-                        Status: {selectedJob.status}
+                        {t("studio.status", { status: selectedJob.status })}
                       </span>
                       <span
                         className="status-pill"
@@ -707,7 +761,7 @@ export function TailoringStudio({
                             color: "var(--warning)",
                           }}
                         >
-                          Descrição curta ({wordCount} palavras)
+                          {t("studio.shortDescription", { count: wordCount })}
                         </span>
                       )}
                     </div>
@@ -756,7 +810,7 @@ export function TailoringStudio({
                       }}
                     >
                       <span className="field-label" style={{ marginBottom: 0 }}>
-                        Job Description
+                        {t("studio.jobDescription")}
                       </span>
                       <span
                         style={{
@@ -764,7 +818,7 @@ export function TailoringStudio({
                           color: "var(--ink-secondary)",
                         }}
                       >
-                        {wordCount} palavras
+                        {t("studio.wordCount", { count: wordCount })}
                       </span>
                     </div>
                     <div
@@ -773,7 +827,7 @@ export function TailoringStudio({
                       role="region"
                       aria-label="Full job description"
                     >
-                      {jobText || "No job description available."}
+                      {jobText || t("studio.noJobDescription")}
                     </div>
                   </div>
                 </>
@@ -1404,8 +1458,8 @@ export function TailoringStudio({
             >
               <p>
                 {compiling
-                  ? "Generating PDF preview..."
-                  : "Nenhum conteúdo de currículo para exibir na prévia."}
+                  ? t("studio.generatingPreview")
+                  : t("studio.noResumeContent")}
               </p>
             </div>
           )}

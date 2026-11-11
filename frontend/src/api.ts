@@ -14,6 +14,7 @@ export interface ExperienceItem {
   start_date: string | null;
   end_date: string | null;
   is_current: boolean;
+  is_academic?: boolean;
   bullets_json: BulletItem[];
 }
 
@@ -24,6 +25,7 @@ export interface ExperiencePayload {
   start_date?: string | null;
   end_date?: string | null;
   is_current?: boolean;
+  is_academic?: boolean;
   bullets_json?: BulletItem[];
 }
 
@@ -125,6 +127,7 @@ export interface JobPostingItem {
   cleaned_text: string | null;
   language: string;
   status: string;
+  match_percentage?: number | null;
   created_at: string;
 }
 
@@ -175,6 +178,7 @@ export interface GupyRundown {
   prioritized_skill_tags: string[];
   language: TargetLanguage;
   selected_persona: string;
+  screening_qa?: SolveQuestionResponse[];
 }
 
 export interface SolveQuestionResponse {

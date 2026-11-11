@@ -26,10 +26,10 @@ a strict JSON object with this exact structure:
     "Databases": ["PostgreSQL", "Redis"]
   },
   "languages": ["Português (Nativo)", "Inglês (Avançado)"],
-  "experiences": [
+  "professional_experiences": [
     {
       "company": "Company Name",
-      "role": "Job Title",
+      "role": "Job Title (formal employment, CLT, PJ, corporate internships)",
       "location": "Location or Remote",
       "start_date": "YYYY-MM or string",
       "end_date": "YYYY-MM or string or null",
@@ -41,10 +41,28 @@ a strict JSON object with this exact structure:
         }
       ]
     }
+  ],
+  "academic_projects": [
+    {
+      "company": "University / Institution Name",
+      "role": "Project or Research Title (thesis, capstone, scientific research, scholarship)",
+      "location": "Location or Remote",
+      "start_date": "YYYY-MM or string",
+      "end_date": "YYYY-MM or string or null",
+      "is_current": false,
+      "bullets": [
+        {
+          "text": "Research methodology, tools used, and scientific / academic outcome.",
+          "tags": ["relevant", "skills"]
+        }
+      ]
+    }
   ]
 }
 Return only valid JSON without markdown wrapping.
-Extract all real experiences and achievements present in the text."""
+CRITICAL: Strictly separate commercial employment (professional_experiences)
+from university research/thesis/capstone work (academic_projects).
+Never omit formal corporate jobs when academic projects are present."""
 
 
 def normalize_parsed_profile(data: dict[str, Any]) -> dict[str, Any]:
@@ -77,10 +95,11 @@ def normalize_parsed_profile(data: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(languages_raw, str) and languages_raw.strip():
         languages = [s.strip() for s in languages_raw.split(",") if s.strip()]
 
-    experiences_raw = data.get("experiences") or []
-    experiences: list[dict[str, Any]] = []
-    if isinstance(experiences_raw, list):
-        for exp in experiences_raw:
+    def _parse_exp_list(raw_list: Any, default_academic: bool) -> list[dict[str, Any]]:
+        parsed: list[dict[str, Any]] = []
+        if not isinstance(raw_list, list):
+            return parsed
+        for exp in raw_list:
             if not isinstance(exp, dict):
                 continue
             company = str(exp.get("company") or "").strip()
@@ -100,17 +119,30 @@ def normalize_parsed_profile(data: dict[str, Any]) -> dict[str, Any]:
                     elif isinstance(b, str) and b.strip():
                         bullets.append({"text": b.strip(), "tags": []})
 
-            experiences.append(
+            is_acad = bool(exp.get("is_academic", default_academic))
+            parsed.append(
                 {
-                    "company": company or "Empresa",
-                    "role": role or "Cargo",
+                    "company": company or ("Universidade" if is_acad else "Empresa"),
+                    "role": role or ("Pesquisa / Projeto" if is_acad else "Cargo"),
                     "location": str(exp.get("location") or "").strip() or None,
                     "start_date": str(exp.get("start_date") or "").strip() or None,
                     "end_date": str(exp.get("end_date") or "").strip() or None,
                     "is_current": bool(exp.get("is_current", False)),
+                    "is_academic": is_acad,
                     "bullets": bullets,
                 }
             )
+        return parsed
+
+    experiences: list[dict[str, Any]] = []
+    has_split = "professional_experiences" in data or "academic_projects" in data
+    if has_split:
+        experiences.extend(
+            _parse_exp_list(data.get("professional_experiences"), default_academic=False)
+        )
+        experiences.extend(_parse_exp_list(data.get("academic_projects"), default_academic=True))
+    if "experiences" in data:
+        experiences.extend(_parse_exp_list(data.get("experiences"), default_academic=False))
 
     return {
         "full_name": full_name,
@@ -165,6 +197,7 @@ def persist_profile_ingestion(
         # Insert extracted experiences
         for exp_data in data.get("experiences", []):
             new_exp = Experience(
+                user_id=profile.user_id,
                 profile_id=profile.id,
                 company=exp_data["company"],
                 role=exp_data["role"],
@@ -172,6 +205,7 @@ def persist_profile_ingestion(
                 start_date=exp_data.get("start_date"),
                 end_date=exp_data.get("end_date"),
                 is_current=exp_data.get("is_current", False),
+                is_academic=exp_data.get("is_academic", False),
                 bullets_json=exp_data.get("bullets", []),
             )
             session.add(new_exp)

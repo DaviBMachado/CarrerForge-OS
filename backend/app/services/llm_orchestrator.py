@@ -290,7 +290,7 @@ class LLMOrchestrator:
     """Unified multi-provider LLM client reading active credentials from SystemSetting."""
 
     DEFAULT_MODELS: dict[LLMProvider, str] = {
-        "gemini": "gemini-3.8-flash",
+        "gemini": "gemini-3.5-flash-lite",
         "openai": "gpt-4o-mini",
         "claude": "claude-3-5-sonnet-latest",
         "ollama": "llama3.1",
