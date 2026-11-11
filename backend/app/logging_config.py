@@ -3,6 +3,8 @@ import logging
 import os
 import re
 import sys
+from collections import deque
+from collections.abc import Callable
 
 # Patterns to mask sensitive tokens, credentials, and API keys
 _REDACTION_RULES: list[tuple[re.Pattern[str], str]] = [
@@ -92,11 +94,51 @@ def _should_use_colors(explicit_flag: bool | None = None) -> bool:
     return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 
+_MEMORY_LOG_BUFFER: deque[dict[str, str]] = deque(maxlen=1000)
+_EXTERNAL_LOG_SINK: Callable[[dict[str, str]], None] | None = None
+
+
+class CircularMemoryLogHandler(logging.Handler):
+    """Stores recent log entries in an in-memory ring buffer with a pluggable external sink."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            dt = datetime.datetime.fromtimestamp(record.created).astimezone()
+            timestamp = dt.isoformat(timespec="seconds")
+            msg = sanitize_sensitive_data(record.getMessage())
+            entry = {
+                "timestamp": timestamp,
+                "level": record.levelname,
+                "logger": record.name,
+                "message": msg,
+            }
+            _MEMORY_LOG_BUFFER.append(entry)
+            if _EXTERNAL_LOG_SINK is not None:
+                try:
+                    _EXTERNAL_LOG_SINK(entry)
+                except Exception:
+                    pass
+        except Exception:
+            self.handleError(record)
+
+
+def get_runtime_logs(limit: int = 150) -> list[dict[str, str]]:
+    """Return the most recent sanitized runtime log entries."""
+    clamped = max(1, min(limit, 1000))
+    return list(_MEMORY_LOG_BUFFER)[-clamped:]
+
+
+def set_external_log_sink(sink: Callable[[dict[str, str]], None] | None) -> None:
+    """Set or remove a redirect hook for distributing logs to a local or remote server."""
+    global _EXTERNAL_LOG_SINK
+    _EXTERNAL_LOG_SINK = sink
+
+
 def setup_logging(
     level: int = logging.INFO,
     use_colors: bool | None = None,
 ) -> logging.Logger:
-    """Initialize root and application loggers with structured formatting and redaction."""
+    """Initialize root and application loggers with structured formatting, redaction, and ring buffer."""
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
 
@@ -109,6 +151,10 @@ def setup_logging(
     handler._careerforge_structured = True  # type: ignore[attr-defined]
     handler.setFormatter(StructuredFormatter(use_colors=_should_use_colors(use_colors)))
     root_logger.addHandler(handler)
+
+    mem_handler = CircularMemoryLogHandler()
+    mem_handler._careerforge_structured = True  # type: ignore[attr-defined]
+    root_logger.addHandler(mem_handler)
 
     # Silence overly verbose external libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)

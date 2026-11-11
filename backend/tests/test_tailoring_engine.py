@@ -10,10 +10,16 @@ from backend.app.models import Experience, JobPosting, MasterProfile, TailoredAr
 from backend.app.routers.tailor import get_llm_orchestrator
 from backend.app.schemas.settings import SettingsUpdate
 from backend.app.services.llm_orchestrator import LLMOrchestrator
-from backend.app.services.resume_compiler import ResumeBlock, ResumeSection, ResumeSpec
+from backend.app.services.resume_compiler import (
+    ResumeBlock,
+    ResumeCompiler,
+    ResumeSection,
+    ResumeSpec,
+)
 from backend.app.services.settings import update_settings
 from backend.app.services.tailoring_engine import (
     FactualGuardrailError,
+    build_human_curation_system_prompt,
     build_tailoring_system_prompt,
     extract_ats_keywords,
     generate_gupy_rundown,
@@ -292,7 +298,7 @@ def test_tailor_job_application_generates_spec_and_persists_artifact(
     assert saved.selected_persona == "Backend Python Engineer"
     assert saved.cover_letter_text == result.cover_letter_text
     assert isinstance(saved.tailored_experience_json, dict)
-    assert saved.tailored_experience_json["name"] == "Davi Bernardes Machado"
+    assert saved.tailored_experience_json["ats"]["name"] == "Davi Bernardes Machado"
     assert "FastAPI" in (saved.tailored_summary or "")
 
 
@@ -485,6 +491,7 @@ def test_get_tailored_artifact_retrieves_saved_spec_without_llm(
         ],
     }
     assert job.id is not None
+    assert job.id is not None
     artifact = TailoredArtifact(
         job_id=job.id,
         selected_persona="Backend Python Engineer",
@@ -628,3 +635,192 @@ def test_solve_screening_question_persistent_cache_hit(
     assert len(rundown.screening_qa) == 1
     assert rundown.screening_qa[0].question == q
     assert rundown.screening_qa[0].answer == res1.answer
+
+
+def test_human_curation_prompt_directives():
+    prompt = build_human_curation_system_prompt("en", "Staff Engineer", ["python", "aws"])
+    assert "top 2 to 3 most relevant" in prompt
+    assert "at most 3 punchy, high-impact bullets" in prompt
+    assert "NEVER fabricate, invent, or extrapolate" in prompt
+    assert "Portuguese (pt-BR)" not in prompt
+
+    prompt_pt = build_human_curation_system_prompt("pt-br", "Engenheiro Backend", ["python"])
+    assert "Portuguese (pt-BR)" in prompt_pt
+
+
+def test_resume_compiler_condensed_mode():
+    spec = ResumeSpec(
+        name="Test Candidate",
+        title="Software Engineer",
+        contact="test@example.com",
+        sections=[
+            ResumeSection(
+                title="Experience",
+                blocks=[
+                    ResumeBlock(type="subheading", text="Engineer | Acme Corp (2020-2024)"),
+                    ResumeBlock(type="bullet", text="Built scalable APIs with FastAPI."),
+                ],
+            )
+        ],
+    )
+    compiler = ResumeCompiler()
+    buf_normal, pages_normal = compiler.compile_pdf(spec, condensed=False)
+    assert pages_normal == 1
+    assert buf_normal.getbuffer().nbytes > 0
+
+    buf_condensed, pages_condensed = compiler.compile_pdf(spec, condensed=True)
+    assert pages_condensed == 1
+    assert buf_condensed.getbuffer().nbytes > 0
+
+
+def test_dual_resume_pipeline_ats_and_human_modes(
+    session: Session,
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    _, profile, job = candidate_setup
+    update_settings(
+        session,
+        SettingsUpdate(active_provider="gemini", gemini_api_key="AIzaMockDualKey123"),
+    )
+
+    def mock_llm_handler(req: httpx.Request) -> httpx.Response:
+        body = json.loads(req.content.decode("utf-8"))
+        sys_text = body.get("systemInstruction", {}).get("parts", [{}])[0].get("text", "")
+        user_text = body.get("contents", [{}])[0].get("parts", [{}])[0].get("text", "")
+        all_text = f"{sys_text} {user_text}"
+        is_human = "top 2 to 3 most relevant" in all_text or "recruiter-facing" in all_text
+        spec_title = "Human Curated Spec" if is_human else "ATS Full Spec"
+        payload = {
+            "resume_spec": {
+                "name": profile.full_name,
+                "title": spec_title,
+                "contact": "davi@example.com",
+                "filename_title": "Resume",
+                "sections": [
+                    {
+                        "title": "Experience",
+                        "blocks": [
+                            {
+                                "type": "subheading",
+                                "text": "Software Engineering Intern | Itaú Unibanco (02/2024 - 06/2025)",
+                            },
+                            {
+                                "type": "bullet",
+                                "text": "Built Python REST integrations between ServiceNow and AWS S3.",
+                            },
+                        ],
+                    }
+                ],
+            },
+            "cover_letter": "Para 1\n\nPara 2\n\nPara 3",
+        }
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]},
+        )
+
+    orchestrator = LLMOrchestrator(
+        session,
+        http_client=httpx.Client(transport=httpx.MockTransport(mock_llm_handler)),
+    )
+
+    # 1. Run ATS tailoring
+    ats_res = tailor_job_application(session, job, profile, orchestrator=orchestrator, mode="ats")
+    assert ats_res.resume_spec.title == "ATS Full Spec"
+    assert ats_res.resume_spec_ats is not None
+    assert ats_res.resume_spec_ats.title == "ATS Full Spec"
+    assert ats_res.resume_spec_human is None
+
+    # Check persistence in database
+    artifact = session.exec(
+        select(TailoredArtifact).where(TailoredArtifact.job_id == job.id)
+    ).first()
+    assert artifact is not None
+    assert isinstance(artifact.tailored_experience_json, dict)
+    assert "ats" in artifact.tailored_experience_json
+    assert artifact.tailored_experience_json["ats"]["title"] == "ATS Full Spec"
+    assert artifact.tailored_experience_json["human"] is None
+
+    # 2. Run Human tailoring
+    human_res = tailor_job_application(
+        session, job, profile, orchestrator=orchestrator, mode="human"
+    )
+    assert human_res.resume_spec.title == "Human Curated Spec"
+    assert human_res.resume_spec_human is not None
+    assert human_res.resume_spec_human.title == "Human Curated Spec"
+    # ATS version must be preserved
+    assert human_res.resume_spec_ats is not None
+    assert human_res.resume_spec_ats.title == "ATS Full Spec"
+
+    session.refresh(artifact)
+    saved_json = artifact.tailored_experience_json
+    assert isinstance(saved_json, dict)
+    assert isinstance(saved_json.get("ats"), dict)
+    assert isinstance(saved_json.get("human"), dict)
+    assert saved_json["ats"]["title"] == "ATS Full Spec"
+    assert saved_json["human"]["title"] == "Human Curated Spec"
+
+    # 3. get_tailored_artifact returns dual representation
+    retrieved = get_tailored_artifact(session, job, profile)
+    assert retrieved is not None
+    assert retrieved.resume_spec_ats is not None
+    assert retrieved.resume_spec_ats.title == "ATS Full Spec"
+    assert retrieved.resume_spec_human is not None
+    assert retrieved.resume_spec_human.title == "Human Curated Spec"
+
+
+def test_retrocompatibility_legacy_tailored_experience_json(
+    session: Session,
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    _, profile, job = candidate_setup
+    legacy_json = {
+        "name": profile.full_name,
+        "title": "Legacy Direct Spec",
+        "contact": "davi@example.com",
+        "filename_title": "Resume_Legacy",
+        "sections": [],
+    }
+    assert job.id is not None
+    artifact = TailoredArtifact(
+        job_id=job.id,
+        selected_persona="Backend Engineer",
+        tailored_summary="Summary",
+        tailored_experience_json=legacy_json,
+        cover_letter_text="P1\n\nP2\n\nP3",
+    )
+    session.add(artifact)
+    session.commit()
+
+    retrieved = get_tailored_artifact(session, job, profile)
+    assert retrieved is not None
+    assert retrieved.resume_spec.title == "Legacy Direct Spec"
+    assert retrieved.resume_spec_ats is not None
+    assert retrieved.resume_spec_ats.title == "Legacy Direct Spec"
+    assert retrieved.resume_spec_human is None
+
+
+def test_tailor_router_modes_and_validation(
+    session: Session,
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    from fastapi.testclient import TestClient
+
+    user, _, job = candidate_setup
+
+    def override_get_db():
+        yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(app) as client:
+            headers = {"X-User-Id": str(user.id)}
+
+            # Invalid mode should 400
+            resp_invalid = client.post(f"/api/tailor/{job.id}?mode=invalid_mode", headers=headers)
+            assert resp_invalid.status_code == 400
+            assert (
+                "Query parameter 'mode' must be 'ats' or 'human'" in resp_invalid.json()["detail"]
+            )
+    finally:
+        app.dependency_overrides.clear()

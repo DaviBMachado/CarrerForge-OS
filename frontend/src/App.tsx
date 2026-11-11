@@ -78,6 +78,8 @@ export function App() {
         return Boolean(s.openai_api_key);
       case "claude":
         return Boolean(s.anthropic_api_key);
+      case "openrouter":
+        return Boolean(s.openrouter_api_key);
       case "ollama":
         return Boolean(s.ollama_base_url);
       default:
@@ -88,6 +90,9 @@ export function App() {
   const providerLabel = settings?.active_provider
     ? settings.active_provider.toUpperCase()
     : "GEMINI";
+  const modelLabel = settings?.selected_model
+    ? ` (${settings.selected_model})`
+    : "";
   const providerReady = isProviderConfigured(settings);
 
   return (
@@ -173,12 +178,23 @@ export function App() {
             </select>
           </div>
 
-          <div
+          <button
+            type="button"
             className="status-pill"
+            style={{
+              cursor: "pointer",
+              background: "none",
+              border: "1px solid var(--border-subtle)",
+              font: "inherit",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.35rem",
+            }}
+            onClick={() => setSettingsOpen(true)}
             title={
               providerReady
-                ? `Active LLM Provider: ${providerLabel} (Key configured)`
-                : `Active LLM Provider: ${providerLabel} (Key missing)`
+                ? `Active LLM: ${providerLabel}${modelLabel} (Click to switch provider/model)`
+                : `Active LLM: ${providerLabel} (Key missing — click to configure)`
             }
           >
             <span
@@ -189,8 +205,8 @@ export function App() {
                   : "var(--warning)",
               }}
             />
-            <span>LLM: {providerLabel}</span>
-          </div>
+            <span>LLM: {providerLabel}{modelLabel}</span>
+          </button>
 
           <div className="status-pill">
             <span

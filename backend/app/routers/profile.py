@@ -55,6 +55,7 @@ def serialize_experience(exp: Experience) -> ExperienceRead:
         end_date=exp.end_date,
         is_current=exp.is_current,
         is_academic=exp.is_academic,
+        is_contract=getattr(exp, "is_contract", False),
         bullets_json=bullets,
     )
 
@@ -124,6 +125,7 @@ def create_experience(
         end_date=data.end_date,
         is_current=data.is_current,
         is_academic=data.is_academic,
+        is_contract=data.is_contract,
         bullets_json=[b.model_dump() for b in data.bullets_json],
     )
     session.add(exp)
@@ -157,6 +159,8 @@ def update_experience(
         exp.is_current = data.is_current
     if data.is_academic is not None:
         exp.is_academic = data.is_academic
+    if data.is_contract is not None:
+        exp.is_contract = data.is_contract
     if data.bullets_json is not None:
         exp.bullets_json = [b.model_dump() for b in data.bullets_json]
 

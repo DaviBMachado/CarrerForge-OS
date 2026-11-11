@@ -141,10 +141,13 @@ def test_persist_profile_ingestion_atomic(db_session: Session):
     assert profile.headline == "Arquiteta Cloud & DevOps"
 
     exps = db_session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
-    assert len(exps) == 1
-    assert exps[0].company == "Tech Corp"
-    assert exps[0].bullets_json is not None
-    assert exps[0].bullets_json[0]["text"].startswith("Redução de 40%")
+    assert len(exps) == 2
+    companies = {e.company for e in exps}
+    assert "Tech Corp" in companies
+    assert "Old Company" in companies
+    tech_exp = next(e for e in exps if e.company == "Tech Corp")
+    assert tech_exp.bullets_json is not None
+    assert tech_exp.bullets_json[0]["text"].startswith("Redução de 40%")
 
 
 def test_upload_endpoint_success(client: TestClient):

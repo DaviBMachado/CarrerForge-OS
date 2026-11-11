@@ -38,6 +38,19 @@ def init_db() -> None:
     from backend.app import models  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
+    if DATABASE_URL.startswith("sqlite"):
+        with engine.connect() as conn:
+            cursor = conn.exec_driver_sql("PRAGMA table_info(experiences)")
+            cols = {row[1] for row in cursor.fetchall()}
+            if "is_contract" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE experiences ADD COLUMN is_contract BOOLEAN DEFAULT 0"
+                )
+            if "is_academic" not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE experiences ADD COLUMN is_academic BOOLEAN DEFAULT 0"
+                )
+            conn.commit()
 
 
 def get_db() -> Generator[Session, None, None]:

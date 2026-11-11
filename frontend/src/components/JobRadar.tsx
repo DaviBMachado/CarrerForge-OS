@@ -48,9 +48,39 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
 
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(true);
+  const [systemLogs, setSystemLogs] = useState<
+    Array<{ timestamp: string; level: string; message: string; logger: string }>
+  >([]);
+  const [logViewMode, setLogViewMode] = useState<"continuous" | "scraper">("continuous");
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchSysLogs = async () => {
+      try {
+        const res = await api.getSystemLogs(200);
+        if (!cancelled && res?.logs) {
+          setSystemLogs(res.logs);
+        }
+      } catch {
+        // ignore background poll errors
+      }
+    };
+    void fetchSysLogs();
+    const interval = setInterval(fetchSysLogs, 3500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (running) {
+      setLogViewMode("scraper");
+    }
+  }, [running]);
 
   useEffect(() => {
     if (!running && eventSourceRef.current) {
@@ -569,10 +599,17 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
                   <div
                     style={{
                       display: "flex",
-                      alignItems: "center",
+                      flexDirection: "column",
+                      alignItems: "flex-end",
                       gap: "0.35rem",
+                      flexShrink: 0,
                     }}
                   >
+                    <span
+                      className={`platform-badge platform-${job.platform.toLowerCase()}`}
+                    >
+                      {job.platform}
+                    </span>
                     {typeof job.match_percentage === "number" && (
                       <span
                         className="status-pill"
@@ -580,6 +617,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
                           fontSize: "0.75rem",
                           fontWeight: 600,
                           padding: "0.15rem 0.5rem",
+                          whiteSpace: "nowrap",
                           backgroundColor:
                             job.match_percentage >= 50
                               ? "var(--success-tint, rgba(16, 185, 129, 0.15))"
@@ -597,11 +635,6 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
                         {job.match_percentage}% match
                       </span>
                     )}
-                    <span
-                      className={`platform-badge platform-${job.platform.toLowerCase()}`}
-                    >
-                      {job.platform}
-                    </span>
                   </div>
                 </div>
 
@@ -655,45 +688,61 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
         )}
       </section>
 
-      {/* Live Scraper Console Drawer */}
+      {/* Live Scraper & Continuous Runtime Console Drawer */}
       <aside
         className={`console-drawer ${drawerOpen ? "open" : "collapsed"}`}
-        aria-label="Live Scraper Console"
+        aria-label="Runtime Status & Scraper Console"
       >
         <div className="console-header">
-          <div className="console-title-group">
+          <div className="console-title-group" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
             <span
               className="status-dot"
               style={{
                 backgroundColor: running
                   ? "var(--accent)"
-                  : logs.length > 0
+                  : systemLogs.length > 0 || logs.length > 0
                     ? "var(--success)"
                     : "var(--ink-placeholder)",
               }}
             />
             <strong style={{ fontSize: "0.85rem" }}>
-              Live Scraper Console
+              Runtime Status & Logs
             </strong>
+            <div style={{ display: "inline-flex", gap: "0.35rem", fontSize: "0.75rem" }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${logViewMode === "continuous" ? "btn-primary" : ""}`}
+                style={{ padding: "0.15rem 0.5rem", fontSize: "0.75rem" }}
+                onClick={() => setLogViewMode("continuous")}
+              >
+                Continuous Logs ({systemLogs.length})
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${logViewMode === "scraper" ? "btn-primary" : ""}`}
+                style={{ padding: "0.15rem 0.5rem", fontSize: "0.75rem" }}
+                onClick={() => setLogViewMode("scraper")}
+              >
+                Scraper Events ({logs.length})
+              </button>
+            </div>
             <span
               style={{ fontSize: "0.78rem", color: "var(--ink-secondary)" }}
             >
               {running
                 ? `Running (${progress}%)`
-                : logs.length > 0
-                  ? `Idle (${progress}%)`
-                  : "Ready"}
+                : "Continuous Live"}
             </span>
           </div>
 
           <div className="inline-add">
-            {logs.length > 0 && (
+            {logViewMode === "scraper" && logs.length > 0 && (
               <button
                 type="button"
                 className="btn btn-sm"
                 onClick={clearRadarLogs}
               >
-                Clear
+                Clear Scraper Logs
               </button>
             )}
             <button
@@ -714,7 +763,38 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
             role="log"
             aria-live="polite"
           >
-            {logs.length === 0 ? (
+            {logViewMode === "continuous" ? (
+              systemLogs.length === 0 ? (
+                <div className="console-line muted">
+                  $ Connecting to continuous runtime log feed...
+                </div>
+              ) : (
+                systemLogs.map((entry, idx) => (
+                  <div key={idx} className="console-line">
+                    <span style={{ color: "var(--ink-secondary)" }}>
+                      [{entry.timestamp.length >= 19 ? entry.timestamp.slice(11, 19) : entry.timestamp}]
+                    </span>{" "}
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        color:
+                          entry.level === "ERROR"
+                            ? "var(--danger)"
+                            : entry.level === "WARNING"
+                              ? "var(--warning, #eab308)"
+                              : "var(--accent)",
+                      }}
+                    >
+                      [{entry.level}]
+                    </span>{" "}
+                    <span style={{ color: "var(--ink-secondary)" }}>
+                      ({entry.logger}):
+                    </span>{" "}
+                    <span>{entry.message}</span>
+                  </div>
+                ))
+              )
+            ) : logs.length === 0 ? (
               <div className="console-line muted">
                 $ Waiting for scraper task... Click &quot;Run Scraper&quot; to
                 stream live SSE telemetry.

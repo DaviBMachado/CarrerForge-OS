@@ -13,7 +13,7 @@ from backend.app.services.llm_orchestrator import (
     detect_language,
     select_persona,
 )
-from backend.app.services.resume_compiler import ResumeSpec
+from backend.app.services.resume_compiler import ResumeCompiler, ResumeSpec
 
 logger = get_logger("careerforge.tailor")
 
@@ -133,6 +133,8 @@ class TailoringResult(BaseModel):
     ats_keywords: list[str] = Field(default_factory=list)
     match_percentage: int = 0
     resume_spec: ResumeSpec
+    resume_spec_ats: ResumeSpec | None = None
+    resume_spec_human: ResumeSpec | None = None
     cover_letter_text: str
 
 
@@ -316,9 +318,13 @@ def build_tailoring_system_prompt(
         "certifications, metrics, or technologies not explicitly present in MasterProfile.\n"
         "2. Rephrasing must be 100% truth-preserving. Only embed ATS keywords grounded "
         "in the candidate's real profile.\n"
-        "3. Resume writing style: strictly structure experience bullets as Action + Scope + Metric "
+        "3. Resume writing style & density: strictly structure experience bullets as Action + Scope + Metric "
         "preserving exact numbers from the profile. Prohibit subjective personality adjectives, "
-        "hollow corporate buzzwords, and symmetric triple-item lists.\n"
+        "hollow corporate buzzwords, and symmetric triple-item lists. "
+        "COMPREHENSIVE EXPERIENCE EXPANSION: Do not generate an abbreviated, sparse, or half-empty resume. "
+        "Elaborate thoroughly on all experiences from MasterProfile, generating 3 to 6 rich, descriptive bullets "
+        "per role detailing the engineering context, technical challenges tackled, architectural implementations, "
+        "and quantified outcomes. The output should be dense, rich in technical depth, and naturally fill 1.5 to 2 full pages.\n"
         f"4. Output language MUST be strictly {lang_label}.\n"
         f"5. Adopt the focus lens / persona: '{persona}'.\n"
         "6. Naturally align these grounded ATS keywords into the summary and "
@@ -338,13 +344,53 @@ def build_tailoring_system_prompt(
         "'cover_letter' (string with 3 paragraphs separated by '\\n\\n').\n"
         "   Allowed block types: 'paragraph' (summary), 'subheading' (Role | Company (Dates)), "
         "'bullet' (impact achievement), 'skillline' (**Category:** skills).\n"
-        "10. Strict distinction between Commercial Experience and Academic Projects: "
-        "differentiate formal employment/corporate roles (is_academic: false) from academic "
-        "research/thesis/capstone projects (is_academic: true). Do NOT present university "
-        "or academic projects as commercial corporate employment. Position academic projects "
-        "truthfully and accurately under an Academic & Research Projects section rather than "
-        "conflating them with commercial industry positions."
+        "10. Strict distinction between Commercial Experience, Academic Projects, and Temporary Contracts: "
+        "differentiate formal permanent employment/corporate roles (is_academic: false, is_contract: false) "
+        "from academic research/thesis/capstone projects (is_academic: true) and temporary contract roles (is_contract: true). "
+        "Do NOT present university or academic projects as commercial corporate employment. "
+        "Position academic projects truthfully under an Academic & Research Projects section and clearly label contract positions "
+        "where appropriate while maintaining full technical rigor."
     )
+
+
+def build_human_curation_system_prompt(
+    language: TargetLanguage,
+    persona: str,
+    grounded_keywords: list[str],
+) -> str:
+    lang_label = "Portuguese (pt-BR)" if language == "pt-br" else "English (en)"
+    kw_str = ", ".join(grounded_keywords) if grounded_keywords else "None"
+    return (
+        "You are an executive talent curator and resume strategist crafting an elite, recruiter-facing resume.\n"
+        "STRICT HUMAN CURATION & SELECTIVITY DIRECTIVES:\n"
+        "1. Executive Curation & Prioritization: Analyze the target job and candidate Master Profile. "
+        "Select actively the top 2 to 3 most relevant, high-impact experiences that best prove fit for this target role. "
+        "Omit secondary, unrelated, or routine past roles and tasks to preserve maximum reader focus and impact.\n"
+        "2. Strict 2-Page Budget & Bullet Conciseness: Each selected experience must contain at most 3 punchy, high-impact bullets. "
+        "Every bullet must follow Action + Scope + Metric without corporate fluff or repetitive phrasing. "
+        "The overall resume must fit comfortably within exactly 2 pages.\n"
+        "3. STRICT FACTUAL INTEGRITY (NON-NEGOTIABLE): NEVER fabricate, invent, or extrapolate companies, roles, "
+        "dates, degrees, metrics, or technologies not explicitly present in MasterProfile. Only include facts grounded in the profile.\n"
+        f"4. Output language MUST be strictly {lang_label}.\n"
+        f"5. Professional Lens: '{persona}'.\n"
+        f"6. Integrate relevant grounded keywords seamlessly: [{kw_str}].\n"
+        "7. Cover letter directive: draft a concise, compelling 3-paragraph cover letter tailored to the job.\n"
+        "8. Structure & Schema: Respond strictly with a JSON object containing keys 'resume_spec' "
+        "(conforming to ResumeSpec schema: name, title, contact, filename_title, sections[{title, blocks[{type, text}]}]) "
+        "and 'cover_letter' (string with 3 paragraphs separated by '\\n\\n').\n"
+        "   Allowed block types: 'paragraph' (summary), 'subheading' (Role | Company (Dates)), "
+        "'bullet' (impact achievement), 'skillline' (**Category:** skills)."
+    )
+
+
+def _parse_dual_specs(raw: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if not isinstance(raw, dict):
+        return None, None
+    if "ats" in raw or "human" in raw:
+        return raw.get("ats"), raw.get("human")
+    if "sections" in raw or "name" in raw or "title" in raw:
+        return raw, None
+    return None, None
 
 
 def _serialize_profile_for_prompt(
@@ -367,6 +413,7 @@ def _serialize_profile_for_prompt(
                 "end_date": exp.end_date,
                 "is_current": exp.is_current,
                 "is_academic": exp.is_academic,
+                "is_contract": getattr(exp, "is_contract", False),
                 "bullets": exp.bullets_json or [],
             }
             for exp in experiences
@@ -430,11 +477,12 @@ def tailor_job_application(
     job: JobPosting,
     profile: MasterProfile,
     orchestrator: LLMOrchestrator | None = None,
+    mode: str = "ats",
 ) -> TailoringResult:
-    """Run the ATS tailoring & cover letter pipeline and persist TailoredArtifact."""
+    """Run the ATS or Human-Curation tailoring & cover letter pipeline and persist TailoredArtifact."""
     assert job.id is not None, "JobPosting must be persisted before tailoring."
     logger.info(
-        f"Starting tailoring lifecycle for job_id={job.id} ('{job.title}' at '{job.company}')"
+        f"Starting tailoring lifecycle for job_id={job.id} ('{job.title}' at '{job.company}') mode='{mode}'"
     )
     experiences = list(
         session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
@@ -445,10 +493,14 @@ def tailor_job_application(
     _, grounded_keywords, match_pct = extract_ats_keywords(job_text, profile, experiences)
     logger.info(
         f"Tailoring strategy selected: persona='{persona}' language='{language}' "
-        f"keywords_count={len(grounded_keywords)} match_percentage={match_pct}%"
+        f"keywords_count={len(grounded_keywords)} match_percentage={match_pct}% mode='{mode}'"
     )
 
-    system_prompt = build_tailoring_system_prompt(language, persona, grounded_keywords)
+    if mode == "human":
+        system_prompt = build_human_curation_system_prompt(language, persona, grounded_keywords)
+    else:
+        system_prompt = build_tailoring_system_prompt(language, persona, grounded_keywords)
+
     user_prompt = (
         f"TARGET JOB:\nTitle: {job.title}\nCompany: {job.company}\n"
         f"Description:\n{job_text}\n\n"
@@ -467,6 +519,47 @@ def tailor_job_application(
 
     verify_factual_guardrails(resume_spec, profile, experiences)
     logger.info(f"Factual guardrails passed for job_id={job.id}")
+
+    if mode == "human":
+        compiler = ResumeCompiler()
+        _, page_count = compiler.compile_pdf(resume_spec, condensed=False)
+        if page_count > 2:
+            logger.info(
+                f"Human resume exceeds 2 pages (compiled to {page_count}). Testing condensed mode."
+            )
+            _, condensed_count = compiler.compile_pdf(resume_spec, condensed=True)
+            if condensed_count > 2:
+                logger.info(
+                    f"Human resume still {condensed_count} pages in condensed mode. "
+                    "Running 1-pass LLM refinement to trim bullets."
+                )
+                refine_prompt = (
+                    f"The following resume specification compiled to {condensed_count} pages and exceeded the strict 2-page limit.\n"
+                    "Please condense the text, shorten lengthy bullets, and ensure each role has at most 2-3 concise high-impact bullets "
+                    "so that it fits comfortably within 2 pages in ReportLab.\n"
+                    "Retain strictly the same factual information, roles, and metrics without inventing anything.\n\n"
+                    f"Resume Spec JSON:\n{resume_spec.model_dump_json(indent=2)}"
+                )
+                refine_sys_prompt = (
+                    "You are an executive resume editor. Shorten the text and bullets while preserving factual accuracy. "
+                    "Respond strictly with a JSON object conforming to ResumeSpec schema: "
+                    "keys 'name', 'title', 'contact', 'filename_title', 'sections[{title, blocks[{type, text}]}]'."
+                )
+                try:
+                    refined_payload = llm.generate_json(
+                        prompt=refine_prompt, system_prompt=refine_sys_prompt
+                    )
+                    raw_refined = (
+                        refined_payload.get("resume_spec")
+                        if isinstance(refined_payload, dict) and "resume_spec" in refined_payload
+                        else refined_payload
+                    )
+                    refined_spec = ResumeSpec.model_validate(raw_refined)
+                    verify_factual_guardrails(refined_spec, profile, experiences)
+                    resume_spec = refined_spec
+                    logger.info("Human resume refinement pass completed successfully")
+                except Exception as refine_err:
+                    logger.warning(f"Human resume refinement pass skipped or failed: {refine_err}")
 
     raw_letter = payload.get("cover_letter") or payload.get("cover_letter_text")
     cover_letter_text = _normalize_cover_letter(raw_letter)
@@ -488,9 +581,18 @@ def tailor_job_application(
     if artifact is None:
         artifact = TailoredArtifact(job_id=job.id)
 
+    raw_ats, raw_human = _parse_dual_specs(artifact.tailored_experience_json)
+    if mode == "human":
+        raw_human = resume_spec.model_dump()
+    else:
+        raw_ats = resume_spec.model_dump()
+
     artifact.selected_persona = persona
-    artifact.tailored_summary = summary_text or None
-    artifact.tailored_experience_json = resume_spec.model_dump()
+    artifact.tailored_summary = summary_text or artifact.tailored_summary or None
+    artifact.tailored_experience_json = {
+        "ats": raw_ats,
+        "human": raw_human,
+    }
     artifact.cover_letter_text = cover_letter_text
 
     job.language = language
@@ -501,7 +603,13 @@ def tailor_job_application(
     session.refresh(artifact)
     assert artifact.id is not None
     assert job.id is not None
-    logger.info(f"Tailoring completed for job_id={job.id} (artifact_id={artifact.id})")
+    logger.info(
+        f"Tailoring completed for job_id={job.id} (artifact_id={artifact.id}) mode='{mode}'"
+    )
+
+    spec_ats = ResumeSpec.model_validate(raw_ats) if raw_ats else None
+    spec_human = ResumeSpec.model_validate(raw_human) if raw_human else None
+
     return TailoringResult(
         artifact_id=artifact.id,
         job_id=job.id,
@@ -510,6 +618,8 @@ def tailor_job_application(
         ats_keywords=grounded_keywords,
         match_percentage=match_pct,
         resume_spec=resume_spec,
+        resume_spec_ats=spec_ats,
+        resume_spec_human=spec_human,
         cover_letter_text=cover_letter_text,
     )
 
@@ -526,10 +636,15 @@ def get_tailored_artifact(
     if artifact is None or not artifact.tailored_experience_json:
         return None
 
-    raw_spec = artifact.tailored_experience_json
-    if isinstance(raw_spec, dict) and "ats" in raw_spec:
-        raw_spec = raw_spec["ats"]
-    resume_spec = ResumeSpec.model_validate(raw_spec)
+    raw_ats, raw_human = _parse_dual_specs(artifact.tailored_experience_json)
+    if not raw_ats and not raw_human:
+        return None
+
+    spec_ats = ResumeSpec.model_validate(raw_ats) if raw_ats else None
+    spec_human = ResumeSpec.model_validate(raw_human) if raw_human else None
+    active_spec = spec_ats or spec_human
+    if active_spec is None:
+        return None
 
     job_text = job.cleaned_text or job.raw_description or ""
     experiences = list(
@@ -552,7 +667,9 @@ def get_tailored_artifact(
         selected_persona=persona,
         ats_keywords=grounded_keywords,
         match_percentage=match_pct,
-        resume_spec=resume_spec,
+        resume_spec=active_spec,
+        resume_spec_ats=spec_ats,
+        resume_spec_human=spec_human,
         cover_letter_text=artifact.cover_letter_text or "",
     )
 

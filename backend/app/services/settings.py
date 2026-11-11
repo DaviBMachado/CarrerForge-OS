@@ -9,15 +9,22 @@ from backend.app.schemas.settings import SettingsRead, SettingsUpdate
 # Keys tracked by settings service
 SETTING_KEYS = {
     "active_provider": "llm_active_provider",
+    "selected_model": "llm_selected_model",
     "gemini_api_key": "gemini_api_key",
     "openai_api_key": "openai_api_key",
     "anthropic_api_key": "anthropic_api_key",
+    "openrouter_api_key": "openrouter_api_key",
     "ollama_base_url": "ollama_base_url",
     "scraper_headless": "scraper_headless",
     "scraper_timeout": "scraper_timeout",
 }
 
-SECRET_KEYS = {"gemini_api_key", "openai_api_key", "anthropic_api_key"}
+SECRET_KEYS = {
+    "gemini_api_key",
+    "openai_api_key",
+    "anthropic_api_key",
+    "openrouter_api_key",
+}
 
 
 def mask_secret(value: str | None) -> str | None:

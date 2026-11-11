@@ -134,14 +134,104 @@ async def scrape_linkedin_jobs(
     if on_log:
         on_log(f"Navigating to LinkedIn search: {search_url}")
 
+    dom_extracted: list[dict[str, str]] = []
+    content = ""
+
     async with get_authenticated_context(headless=True) as context:
         page = await context.new_page()
-        await page.goto(search_url, wait_until="domcontentloaded")
-        await human_jitter()
-        content = await page.content()
+        try:
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+            await human_jitter()
 
-    parsed = parse_linkedin_html(content)
-    results = parsed[:capped_limit]
+            curr_url = page.url.lower()
+            if "authwall" in curr_url or "checkpoint" in curr_url or "login" in curr_url:
+                if on_log:
+                    on_log(
+                        "LinkedIn redirected to authwall/login. Please verify or refresh login session in Job Radar."
+                    )
+
+            # Attempt waiting for either authenticated or public cards to populate
+            for selector in (
+                "div.job-card-container",
+                "li.jobs-search-results__list-item",
+                "div.base-search-card",
+                "li[data-occludable-job-id]",
+            ):
+                try:
+                    await page.wait_for_selector(selector, timeout=4000)
+                    break
+                except Exception:
+                    continue
+
+            # Gently scroll down to trigger lazy loading of search results
+            try:
+                await page.evaluate("window.scrollBy(0, 800);")
+                await asyncio.sleep(1.0)
+            except Exception:
+                pass
+
+            # Extract via live DOM query with support for both authenticated and guest DOMs
+            dom_extracted = await page.evaluate(
+                """() => {
+                    const results = [];
+                    const selectors = [
+                        'li.jobs-search-results__list-item',
+                        'div.job-card-container',
+                        'div.base-search-card',
+                        'li[data-occludable-job-id]'
+                    ];
+                    const nodes = document.querySelectorAll(selectors.join(', '));
+                    for (const node of nodes) {
+                        const titleEl = node.querySelector('.job-card-list__title, .base-search-card__title, a[data-control-name="job_card_click"], h3');
+                        const companyEl = node.querySelector('.job-card-container__primary-description, .base-search-card__subtitle, .job-card-container__company-name, h4');
+                        const locEl = node.querySelector('.job-card-container__metadata-item, .job-search-card__location, span.job-card-container__metadata-wrapper');
+                        const linkEl = node.querySelector('a.job-card-container__link, a.base-card__full-link, a[href*="/jobs/view/"], a');
+                        const title = titleEl ? titleEl.innerText.trim() : '';
+                        const company = companyEl ? companyEl.innerText.trim() : '';
+                        const loc = locEl ? locEl.innerText.trim() : '';
+                        const href = linkEl && linkEl.href ? linkEl.href : '';
+                        const extId = node.getAttribute('data-occludable-job-id') || node.getAttribute('data-job-id') || '';
+                        if (title && company) {
+                            results.push({ title, company, location: loc, url: href, external_id: extId });
+                        }
+                    }
+                    return results;
+                }"""
+            )
+            content = await page.content()
+        except Exception as exc:
+            if on_log:
+                on_log(f"LinkedIn page navigation encounter: {exc}")
+            content = await page.content() if page else ""
+
+    results: list[ScrapedJob] = []
+    if dom_extracted:
+        for item in dom_extracted:
+            raw_url = item.get("url")
+            clean_url = _clean_linkedin_url(raw_url)
+            ext_id = item.get("external_id")
+            if not ext_id and clean_url:
+                ext_id = _extract_first(r"/jobs/view/([^/?#]+)", clean_url)
+            loc = item.get("location") or ""
+            remote_type = "remote" if "remote" in loc.lower() else None
+            results.append(
+                ScrapedJob(
+                    platform="linkedin",
+                    external_id=ext_id,
+                    title=item["title"],
+                    company=item["company"],
+                    location=loc or None,
+                    remote_type=remote_type,
+                    description="",
+                    url=clean_url,
+                    language="en",
+                )
+            )
+
+    if not results and content:
+        results = parse_linkedin_html(content)
+
+    final_results = results[:capped_limit]
     if on_log:
-        on_log(f"Scraped {len(results)} LinkedIn jobs.")
-    return results
+        on_log(f"Scraped {len(final_results)} LinkedIn jobs.")
+    return final_results

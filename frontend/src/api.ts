@@ -1,4 +1,4 @@
-export type LLMProvider = "gemini" | "openai" | "claude" | "ollama";
+export type LLMProvider = "gemini" | "openai" | "claude" | "ollama" | "openrouter";
 
 export interface BulletItem {
   text: string;
@@ -15,6 +15,7 @@ export interface ExperienceItem {
   end_date: string | null;
   is_current: boolean;
   is_academic?: boolean;
+  is_contract?: boolean;
   bullets_json: BulletItem[];
 }
 
@@ -26,6 +27,7 @@ export interface ExperiencePayload {
   end_date?: string | null;
   is_current?: boolean;
   is_academic?: boolean;
+  is_contract?: boolean;
   bullets_json?: BulletItem[];
 }
 
@@ -63,9 +65,11 @@ export interface ProfileUpdatePayload {
 
 export interface SystemSettings {
   active_provider: LLMProvider;
+  selected_model?: string | null;
   gemini_api_key: string | null;
   openai_api_key: string | null;
   anthropic_api_key: string | null;
+  openrouter_api_key?: string | null;
   ollama_base_url: string;
   scraper_headless: boolean;
   scraper_timeout: number;
@@ -169,6 +173,8 @@ export interface TailoringResult {
   ats_keywords: string[];
   match_percentage: number;
   resume_spec: ResumeSpecPayload;
+  resume_spec_ats?: ResumeSpecPayload | null;
+  resume_spec_human?: ResumeSpecPayload | null;
   cover_letter_text: string;
 }
 
@@ -293,6 +299,27 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  fetchModels: (provider: string, apiKey?: string) => {
+    const params = new URLSearchParams({ provider });
+    if (apiKey) params.append("api_key", apiKey);
+    return request<{ models: string[]; default_model: string }>(
+      `/api/settings/models?${params.toString()}`
+    );
+  },
+  getSystemLogs: (limit = 150) =>
+    request<{
+      logs: Array<{
+        timestamp: string;
+        level: string;
+        logger: string;
+        message: string;
+      }>;
+    }>(`/api/system/logs?limit=${limit}`),
+  expandResumeSection: (currentText: string) =>
+    request<{ expanded_text: string }>("/api/tailor/expand-section", {
+      method: "POST",
+      body: JSON.stringify({ current_text: currentText }),
+    }),
   previewResume: (spec: ResumeSpecPayload) =>
     request<PreviewResponse>("/api/compiler/preview", {
       method: "POST",
@@ -362,8 +389,8 @@ export const api = {
     }),
   getTailoredJob: (jobId: number) =>
     request<TailoringResult>(`/api/tailor/${jobId}`),
-  tailorJob: (jobId: number) =>
-    request<TailoringResult>(`/api/tailor/${jobId}`, {
+  tailorJob: (jobId: number, mode: "ats" | "human" = "ats") =>
+    request<TailoringResult>(`/api/tailor/${jobId}?mode=${mode}`, {
       method: "POST",
     }),
   getGupyRundown: (jobId: number) =>
