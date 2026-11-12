@@ -106,6 +106,11 @@ class CircularMemoryLogHandler(logging.Handler):
             dt = datetime.datetime.fromtimestamp(record.created).astimezone()
             timestamp = dt.isoformat(timespec="seconds")
             msg = sanitize_sensitive_data(record.getMessage())
+            if record.exc_info:
+                if not record.exc_text:
+                    record.exc_text = logging.Formatter().formatException(record.exc_info)
+                if record.exc_text:
+                    msg = f"{msg}\n{sanitize_sensitive_data(record.exc_text)}"
             entry = {
                 "timestamp": timestamp,
                 "level": record.levelname,

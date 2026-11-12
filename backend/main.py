@@ -17,7 +17,7 @@ from backend.app.routers.tailor import router as tailor_router
 setup_logging()
 logger = get_logger("careerforge.http")
 
-QUIET_SUCCESS_PATHS = {"/api/system/logs"}
+QUIET_SUCCESS_PATHS = {"/api/system/logs", "/api/health"}
 
 
 @asynccontextmanager

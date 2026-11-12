@@ -202,7 +202,10 @@ async def scrape_linkedin_jobs(
         except Exception as exc:
             if on_log:
                 on_log(f"LinkedIn page navigation encounter: {exc}")
-            content = await page.content() if page else ""
+            try:
+                content = await page.content() if page else ""
+            except Exception:
+                content = ""
 
     results: list[ScrapedJob] = []
     if dom_extracted:

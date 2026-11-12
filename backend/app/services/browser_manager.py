@@ -105,21 +105,23 @@ def _merge_and_save_state(new_state: dict[str, Any]) -> None:
 
 @asynccontextmanager
 async def get_authenticated_context(headless: bool = True) -> AsyncGenerator[Any, None]:
+    await close_interactive_session()
     session_path = ensure_session_dir()
-    async with async_playwright() as p:
-        context = await p.chromium.launch_persistent_context(
-            str(session_path),
-            headless=headless,
-            user_agent=DEFAULT_USER_AGENT,
-            viewport={"width": 1280, "height": 800},
-        )
-        try:
-            yield context
-            state = await context.storage_state()
-            if isinstance(state, dict):
-                _save_state_data(state)
-        finally:
-            await context.close()
+    async with _session_lock:
+        async with async_playwright() as p:
+            context = await p.chromium.launch_persistent_context(
+                str(session_path),
+                headless=headless,
+                user_agent=DEFAULT_USER_AGENT,
+                viewport={"width": 1280, "height": 800},
+            )
+            try:
+                yield context
+                state = await context.storage_state()
+                if isinstance(state, dict):
+                    _save_state_data(state)
+            finally:
+                await context.close()
 
 
 async def close_interactive_session() -> dict[str, str]:

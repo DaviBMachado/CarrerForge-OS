@@ -70,11 +70,11 @@ def test_structured_formatter_with_colors():
 def test_http_request_tracing_middleware(caplog):
     client = TestClient(app)
     with caplog.at_level(logging.INFO):
-        resp = client.get("/api/health")
+        resp = client.get("/api/scraper/session/status")
         assert resp.status_code == 200
 
     logs = [rec.message for rec in caplog.records if "careerforge.http" in rec.name]
-    assert any("[GET] /api/health -> 200 OK" in m for m in logs)
+    assert any("[GET] /api/scraper/session/status -> 200 OK" in m for m in logs)
     assert any("ms)" in m for m in logs)
 
 
@@ -91,11 +91,35 @@ def test_http_request_tracing_404(caplog):
 def test_http_request_tracing_quiet_success(caplog):
     client = TestClient(app)
     with caplog.at_level(logging.INFO):
-        resp = client.get("/api/system/logs?limit=50")
-        assert resp.status_code == 200
+        resp_logs = client.get("/api/system/logs?limit=50")
+        assert resp_logs.status_code == 200
+        resp_health = client.get("/api/health")
+        assert resp_health.status_code == 200
 
     logs = [rec.message for rec in caplog.records if "careerforge.http" in rec.name]
     assert not any("/api/system/logs" in m for m in logs)
+    assert not any("/api/health" in m for m in logs)
+
+
+def test_circular_memory_log_handler_exception_formatting():
+    from backend.app.logging_config import CircularMemoryLogHandler, get_runtime_logs
+
+    handler = CircularMemoryLogHandler()
+    logger = logging.getLogger("test.exception_logger")
+    logger.addHandler(handler)
+    logger.setLevel(logging.ERROR)
+
+    try:
+        raise ValueError("Simulated failure for traceback test")
+    except ValueError:
+        logger.error("An error occurred during task execution", exc_info=True)
+
+    recent = get_runtime_logs(limit=10)
+    assert any(
+        "Simulated failure for traceback test" in entry["message"]
+        and "Traceback (most recent call last):" in entry["message"]
+        for entry in recent
+    )
 
 
 def test_resume_compiler_logging(caplog):
