@@ -143,7 +143,7 @@ def normalize_parsed_profile(data: dict[str, Any]) -> dict[str, Any]:
             _parse_exp_list(data.get("professional_experiences"), default_academic=False)
         )
         experiences.extend(_parse_exp_list(data.get("academic_projects"), default_academic=True))
-    if "experiences" in data:
+    if "experiences" in data and (not has_split or not experiences):
         experiences.extend(_parse_exp_list(data.get("experiences"), default_academic=False))
 
     return {
@@ -173,11 +173,6 @@ def persist_profile_ingestion(
 
     try:
         if data.get("full_name") and not (profile.full_name or "").strip():
-            profile.full_name = data["full_name"]
-        elif data.get("full_name") and (profile.full_name or "").strip():
-            # Keep existing full name
-            pass
-        elif data.get("full_name"):
             profile.full_name = data["full_name"]
 
         if data.get("headline") and not (profile.headline or "").strip():

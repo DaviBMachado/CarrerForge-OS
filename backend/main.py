@@ -17,6 +17,8 @@ from backend.app.routers.tailor import router as tailor_router
 setup_logging()
 logger = get_logger("careerforge.http")
 
+QUIET_SUCCESS_PATHS = {"/api/system/logs"}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,7 +57,7 @@ async def http_request_tracing_middleware(request: Request, call_next):
             logger.error(log_msg)
         elif status >= 400:
             logger.warning(log_msg)
-        else:
+        elif path.rstrip("/") not in QUIET_SUCCESS_PATHS:
             logger.info(log_msg)
 
         return response

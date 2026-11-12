@@ -304,13 +304,18 @@ def verify_factual_guardrails(
     logger.info("Factual guardrail check passed: zero ungrounded technologies detected")
 
 
-def build_tailoring_system_prompt(
+def build_ats_system_prompt(
     language: TargetLanguage,
     persona: str,
     grounded_keywords: list[str],
 ) -> str:
     lang_label = "Portuguese (pt-BR)" if language == "pt-br" else "English (en)"
     kw_str = ", ".join(grounded_keywords) if grounded_keywords else "None"
+    contract_subheading_format = (
+        "Cargo (Contrato Temporário) | Empresa (Datas)"
+        if language == "pt-br"
+        else "Role (Contract) | Company (Dates)"
+    )
     return (
         "You are an elite ATS Resume & Cover Letter Tailoring Engine.\n"
         "STRICT FACTUAL INTEGRITY & ANTI-AI DIRECTIVES (NON-NEGOTIABLE):\n"
@@ -348,9 +353,15 @@ def build_tailoring_system_prompt(
         "differentiate formal permanent employment/corporate roles (is_academic: false, is_contract: false) "
         "from academic research/thesis/capstone projects (is_academic: true) and temporary contract roles (is_contract: true). "
         "Do NOT present university or academic projects as commercial corporate employment. "
-        "Position academic projects truthfully under an Academic & Research Projects section and clearly label contract positions "
-        "where appropriate while maintaining full technical rigor."
+        "Position academic projects truthfully under an Academic & Research Projects section. "
+        f"For experiences with is_contract: true, the subheading block MUST follow the deterministic format '{contract_subheading_format}'. "
+        "Craft bullets for temporary contracts with strong emphasis on rapid ramp-up, autonomous delivery of agreed project scope, "
+        "and high impact achieved within the fixed engagement period."
     )
+
+
+# Backward-compatibility alias
+build_tailoring_system_prompt = build_ats_system_prompt
 
 
 def build_human_curation_system_prompt(
@@ -360,6 +371,11 @@ def build_human_curation_system_prompt(
 ) -> str:
     lang_label = "Portuguese (pt-BR)" if language == "pt-br" else "English (en)"
     kw_str = ", ".join(grounded_keywords) if grounded_keywords else "None"
+    contract_subheading_format = (
+        "Cargo (Contrato Temporário) | Empresa (Datas)"
+        if language == "pt-br"
+        else "Role (Contract) | Company (Dates)"
+    )
     return (
         "You are an executive talent curator and resume strategist crafting an elite, recruiter-facing resume.\n"
         "STRICT HUMAN CURATION & SELECTIVITY DIRECTIVES:\n"
@@ -379,7 +395,14 @@ def build_human_curation_system_prompt(
         "(conforming to ResumeSpec schema: name, title, contact, filename_title, sections[{title, blocks[{type, text}]}]) "
         "and 'cover_letter' (string with 3 paragraphs separated by '\\n\\n').\n"
         "   Allowed block types: 'paragraph' (summary), 'subheading' (Role | Company (Dates)), "
-        "'bullet' (impact achievement), 'skillline' (**Category:** skills)."
+        "'bullet' (impact achievement), 'skillline' (**Category:** skills).\n"
+        "9. Strict distinction between Commercial Experience, Academic Projects, and Temporary Contracts: "
+        "differentiate formal permanent corporate roles (is_academic: false, is_contract: false) "
+        "from academic projects (is_academic: true) and temporary contract roles (is_contract: true). "
+        "Do NOT present university or academic projects as commercial corporate employment. "
+        f"For experiences with is_contract: true, the subheading block MUST follow the deterministic format '{contract_subheading_format}'. "
+        "Craft bullets for temporary contracts emphasizing rapid ramp-up, autonomous delivery of agreed project scope, "
+        "and high impact within the contract timeframe."
     )
 
 
@@ -869,7 +892,11 @@ def solve_screening_question(
         "4. Keep the answer concise (1 to 2 paragraphs, ready to paste into Gupy or ATS forms).\n"
         f"5. Output language MUST be strictly {lang_label}.\n"
         f"6. Adopt the focus lens: '{persona}'.\n"
-        "7. Respond strictly with a JSON object containing keys: "
+        "7. Positioning Temporary Contracts: When citing experiences marked with is_contract: true, "
+        "position them positively as scoped consulting engagements or specialized deliverables with defined objectives. "
+        "Frame achievements around rapid ramp-up and successful autonomous completion of the agreed scope, "
+        "preventing defensive phrasing or perceptions of career instability.\n"
+        "8. Respond strictly with a JSON object containing keys: "
         "'answer' (string) and 'grounded_experiences' (list of company/project names cited)."
     )
 
