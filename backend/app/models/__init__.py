@@ -79,6 +79,7 @@ class Experience(SQLModel, table=True):
     end_date: str | None = None
     is_current: bool = Field(default=False)
     is_academic: bool = Field(default=False)
+    is_contract: bool = Field(default=False)
     bullets_json: list[dict[str, Any]] | None = Field(default=None, sa_type=JSON)
 
     user: User | None = Relationship(back_populates="experiences")
@@ -140,16 +141,6 @@ class SystemSetting(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     user: User | None = Relationship(back_populates="system_settings")
-
-
-__all__ = [
-    "User",
-    "MasterProfile",
-    "Experience",
-    "JobPosting",
-    "TailoredArtifact",
-    "SystemSetting",
-]
 
 
 __all__ = [

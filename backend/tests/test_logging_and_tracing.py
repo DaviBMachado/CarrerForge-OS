@@ -88,6 +88,16 @@ def test_http_request_tracing_404(caplog):
     assert any("[GET] /api/nonexistent-endpoint -> 404 Not Found" in m for m in logs)
 
 
+def test_http_request_tracing_quiet_success(caplog):
+    client = TestClient(app)
+    with caplog.at_level(logging.INFO):
+        resp = client.get("/api/system/logs?limit=50")
+        assert resp.status_code == 200
+
+    logs = [rec.message for rec in caplog.records if "careerforge.http" in rec.name]
+    assert not any("/api/system/logs" in m for m in logs)
+
+
 def test_resume_compiler_logging(caplog):
     compiler = ResumeCompiler()
     spec = ResumeSpec(

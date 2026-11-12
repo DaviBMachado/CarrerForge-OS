@@ -207,6 +207,11 @@ export function TailoringStudio({
   const [atsKeywords, setAtsKeywords] = useState<string[]>([]);
   const [matchPercentage, setMatchPercentage] = useState<number>(0);
 
+  type ResumeMode = "ats" | "human";
+  const [resumeMode, setResumeMode] = useState<ResumeMode>("ats");
+  const [atsSpec, setAtsSpec] = useState<ResumeSpecPayload | null>(null);
+  const [humanSpec, setHumanSpec] = useState<ResumeSpecPayload | null>(null);
+
   const [resumeSpec, setResumeSpec] = useState<ResumeSpecPayload>(() =>
     profileToInitialSpec(profile, selectedJob)
   );
@@ -277,11 +282,15 @@ export function TailoringStudio({
       setRundown(null);
       setQaHistory([]);
       setQuestionInput("");
+      setAtsSpec(null);
+      setHumanSpec(null);
       return;
     }
     setRundown(null);
     setQaHistory([]);
     setQuestionInput("");
+    setAtsSpec(null);
+    setHumanSpec(null);
     const jobText = selectedJob.cleaned_text || selectedJob.raw_description || "";
     const local = deriveLocalKeywords(jobText, profile);
     setAtsKeywords(local.keywords);
@@ -295,10 +304,25 @@ export function TailoringStudio({
         setLanguage(tailored.language);
         setAtsKeywords(tailored.ats_keywords);
         setMatchPercentage(tailored.match_percentage);
-        setResumeSpec({
-          ...tailored.resume_spec,
-          sections: normalizeSections(tailored.resume_spec.sections || []),
-        });
+
+        const rawAts = tailored.resume_spec_ats || tailored.resume_spec || null;
+        const rawHuman = tailored.resume_spec_human || null;
+        const parsedAts = rawAts
+          ? { ...rawAts, sections: normalizeSections(rawAts.sections || []) }
+          : null;
+        const parsedHuman = rawHuman
+          ? { ...rawHuman, sections: normalizeSections(rawHuman.sections || []) }
+          : null;
+
+        setAtsSpec(parsedAts);
+        setHumanSpec(parsedHuman);
+
+        if (resumeMode === "human" && parsedHuman) {
+          setResumeSpec(parsedHuman);
+        } else if (parsedAts) {
+          setResumeSpec(parsedAts);
+        }
+
         setCoverLetter(tailored.cover_letter_text);
       })
       .catch(() => {
@@ -403,22 +427,66 @@ export function TailoringStudio({
     }, 2000);
   };
 
-  const handleRunTailor = async () => {
+  const handleSwitchMode = (newMode: ResumeMode) => {
+    if (newMode === resumeMode) return;
+    if (resumeMode === "ats") {
+      setAtsSpec(resumeSpec);
+    } else {
+      setHumanSpec(resumeSpec);
+    }
+    setResumeMode(newMode);
+
+    if (newMode === "ats") {
+      if (atsSpec) {
+        setResumeSpec(atsSpec);
+      }
+    } else {
+      if (humanSpec) {
+        setResumeSpec(humanSpec);
+      }
+    }
+  };
+
+  const handleRunTailor = async (modeToRun?: ResumeMode) => {
     if (!selectedJob) {
       onNotify("error", "Select a job posting first to run AI tailoring.");
       return;
     }
+    const targetMode = modeToRun || resumeMode;
     setTailoring(true);
     try {
-      const result = await api.tailorJob(selectedJob.id);
+      const result = await api.tailorJob(selectedJob.id, targetMode);
       setPersona(result.selected_persona);
       setLanguage(result.language);
       setAtsKeywords(result.ats_keywords);
       setMatchPercentage(result.match_percentage);
-      setResumeSpec({
-        ...result.resume_spec,
-        sections: normalizeSections(result.resume_spec.sections || []),
-      });
+
+      const rawAts =
+        result.resume_spec_ats || (targetMode === "ats" ? result.resume_spec : atsSpec);
+      const rawHuman =
+        result.resume_spec_human || (targetMode === "human" ? result.resume_spec : humanSpec);
+      const parsedAts = rawAts
+        ? { ...rawAts, sections: normalizeSections(rawAts.sections || []) }
+        : null;
+      const parsedHuman = rawHuman
+        ? { ...rawHuman, sections: normalizeSections(rawHuman.sections || []) }
+        : null;
+
+      setAtsSpec(parsedAts);
+      setHumanSpec(parsedHuman);
+
+      if (targetMode === "human") {
+        setResumeMode("human");
+        if (parsedHuman) {
+          setResumeSpec(parsedHuman);
+        }
+      } else {
+        setResumeMode("ats");
+        if (parsedAts) {
+          setResumeSpec(parsedAts);
+        }
+      }
+
       setCoverLetter(result.cover_letter_text);
 
       // Refresh Gupy rundown with newly tailored summary
@@ -432,9 +500,10 @@ export function TailoringStudio({
         })
         .catch(() => {});
 
+      const modeLabel = targetMode === "human" ? "Human Curation (2-Page)" : "ATS Optimized";
       onNotify(
         "success",
-        `Tailored for ${selectedJob.company} using "${result.selected_persona}" lens (${result.match_percentage}% ATS match).`
+        `Tailored (${modeLabel}) for ${selectedJob.company} using "${result.selected_persona}" lens (${result.match_percentage}% ATS match).`
       );
     } catch (err) {
       onNotify(
@@ -592,12 +661,21 @@ export function TailoringStudio({
   };
 
   const pageCount = preview?.page_count ?? 1;
-  const isOverflow = preview ? !preview.is_valid_2_page || pageCount > 2 : false;
-  const fillPercent = Math.min(100, Math.round((pageCount / 2) * 100));
-  const meterColor = isOverflow
-    ? "var(--danger)"
-    : pageCount === 2
-      ? "var(--success)"
+  const isOverflow =
+    resumeMode === "human"
+      ? preview
+        ? !preview.is_valid_2_page || pageCount > 2
+        : false
+      : false;
+  const fillPercent =
+    resumeMode === "human"
+      ? Math.min(100, Math.round((pageCount / 2) * 100))
+      : Math.min(100, Math.round((pageCount / Math.max(pageCount, 2)) * 100));
+  const meterColor =
+    resumeMode === "human"
+      ? isOverflow
+        ? "var(--danger)"
+        : "var(--success)"
       : "var(--accent)";
 
   return (
@@ -630,10 +708,10 @@ export function TailoringStudio({
           <button
             type="button"
             className="btn btn-primary"
-            onClick={handleRunTailor}
+            onClick={() => void handleRunTailor()}
             disabled={tailoring || !selectedJob}
           >
-            {tailoring ? "Tailoring with AI..." : "✨ Tailor with AI"}
+            {tailoring ? "Tailoring with AI..." : "Tailor with AI"}
           </button>
         </div>
       </div>
@@ -896,6 +974,80 @@ export function TailoringStudio({
               aria-labelledby="studio-tab-resume"
               className="studio-tab-body"
             >
+              {/* Dual Resume Mode Segmented Control */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "1rem",
+                  padding: "0.5rem 0.75rem",
+                  backgroundColor: "rgba(0, 0, 0, 0.03)",
+                  borderRadius: "6px",
+                  border: "1px solid var(--line, #e2e8f0)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--ink-secondary)" }}>
+                    Mode:
+                  </span>
+                  <div style={{ display: "flex", gap: "0.25rem" }} role="group" aria-label="Resume Mode Selector">
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${resumeMode === "ats" ? "btn-primary" : ""}`}
+                      onClick={() => handleSwitchMode("ats")}
+                    >
+                      ATS Optimized
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${resumeMode === "human" ? "btn-primary" : ""}`}
+                      onClick={() => handleSwitchMode("human")}
+                    >
+                      Recruiter / Human (2-Page)
+                    </button>
+                  </div>
+                </div>
+
+                <span style={{ fontSize: "0.78rem", color: "var(--ink-secondary)" }}>
+                  {resumeMode === "ats"
+                    ? "Full keyword density • flexible sizing"
+                    : "Executive curation • strict 2-page limit"}
+                </span>
+              </div>
+
+              {resumeMode === "human" && !humanSpec && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "0.85rem 1rem",
+                    marginBottom: "1rem",
+                    borderRadius: "6px",
+                    backgroundColor: "rgba(31, 58, 95, 0.06)",
+                    border: "1px solid rgba(31, 58, 95, 0.2)",
+                  }}
+                >
+                  <div>
+                    <strong style={{ fontSize: "0.875rem", display: "block" }}>
+                      Versao de Leitura Humana ainda nao gerada
+                    </strong>
+                    <span style={{ fontSize: "0.8rem", color: "var(--ink-secondary)" }}>
+                      A IA seleciona as 2 a 3 experiencias mais relevantes e enxuga o conteudo para 2 paginas.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    onClick={() => void handleRunTailor("human")}
+                    disabled={tailoring || !selectedJob}
+                  >
+                    {tailoring ? "Gerando..." : "Gerar Versao Humana com Julgamento da IA"}
+                  </button>
+                </div>
+              )}
+
               <div className="form-grid">
                 <div className="field">
                   <label className="field-label" htmlFor="spec-header-title">
@@ -1355,7 +1507,11 @@ export function TailoringStudio({
               <span
                 className="status-pill"
                 style={{
-                  borderColor: isOverflow ? "var(--danger)" : "var(--success)",
+                  borderColor: isOverflow
+                    ? "var(--danger)"
+                    : resumeMode === "human"
+                      ? "var(--success)"
+                      : "var(--accent)",
                   color: "var(--ink-primary)",
                 }}
               >
@@ -1364,12 +1520,15 @@ export function TailoringStudio({
                   style={{
                     backgroundColor: isOverflow
                       ? "var(--danger)"
-                      : "var(--success)",
+                      : resumeMode === "human"
+                        ? "var(--success)"
+                        : "var(--accent)",
                   }}
                 />
                 <span>
-                  {pageCount} / 2 pages{" "}
-                  {isOverflow ? "(Overflow!)" : "(ATS Ready)"}
+                  {resumeMode === "human"
+                    ? `${pageCount} / 2 pages (Regra Estrita)`
+                    : `${pageCount} pages (Sugestao de dimensionamento)`}
                 </span>
               </span>
             </div>
@@ -1379,7 +1538,7 @@ export function TailoringStudio({
               role="progressbar"
               aria-valuenow={pageCount}
               aria-valuemin={0}
-              aria-valuemax={2}
+              aria-valuemax={resumeMode === "human" ? 2 : Math.max(2, pageCount)}
             >
               <div
                 className="budget-fill"
@@ -1392,7 +1551,6 @@ export function TailoringStudio({
 
             {isOverflow && (
               <div className="budget-alert" role="alert">
-                <span>⚠️</span>
                 <span>
                   Exceeds 2-page limit! Prune bullets in Resume Editor.
                 </span>

@@ -141,10 +141,13 @@ def test_persist_profile_ingestion_atomic(db_session: Session):
     assert profile.headline == "Arquiteta Cloud & DevOps"
 
     exps = db_session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
-    assert len(exps) == 1
-    assert exps[0].company == "Tech Corp"
-    assert exps[0].bullets_json is not None
-    assert exps[0].bullets_json[0]["text"].startswith("Redução de 40%")
+    assert len(exps) == 2
+    companies = {e.company for e in exps}
+    assert "Tech Corp" in companies
+    assert "Old Company" in companies
+    tech_exp = next(e for e in exps if e.company == "Tech Corp")
+    assert tech_exp.bullets_json is not None
+    assert tech_exp.bullets_json[0]["text"].startswith("Redução de 40%")
 
 
 def test_upload_endpoint_success(client: TestClient):
@@ -253,3 +256,26 @@ def test_normalize_and_persist_academic_and_professional_separation(db_session: 
     assert exps[0].is_academic is False
     assert exps[1].company == "Universidade de São Paulo (USP)"
     assert exps[1].is_academic is True
+
+
+def test_normalize_parsed_profile_experiences_fallback():
+    # Case 1: Split keys present and populated -> legacy "experiences" ignored
+    data_with_both = {
+        "professional_experiences": [
+            {"company": "New Corp", "role": "Dev", "bullets": ["Built app"]}
+        ],
+        "experiences": [{"company": "Legacy Corp", "role": "Old Dev", "bullets": ["Old bullet"]}],
+    }
+    res1 = normalize_parsed_profile(data_with_both)
+    assert len(res1["experiences"]) == 1
+    assert res1["experiences"][0]["company"] == "New Corp"
+
+    # Case 2: Split keys present but both empty -> fallback to legacy "experiences"
+    data_empty_split = {
+        "professional_experiences": [],
+        "academic_projects": [],
+        "experiences": [{"company": "Legacy Corp", "role": "Old Dev", "bullets": ["Old bullet"]}],
+    }
+    res2 = normalize_parsed_profile(data_empty_split)
+    assert len(res2["experiences"]) == 1
+    assert res2["experiences"][0]["company"] == "Legacy Corp"

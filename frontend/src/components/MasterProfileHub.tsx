@@ -7,6 +7,7 @@ import {
   MasterProfile,
   SkillsMatrix,
 } from "../api";
+import { useTranslation } from "../i18n";
 import { useAppStore } from "../store";
 
 interface MasterProfileHubProps {
@@ -39,6 +40,7 @@ function formatTagDisplay(tag: string): string {
 }
 
 export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
+  const { t } = useTranslation();
   const fetchProfile = useAppStore((s) => s.fetchProfile);
   const setProfileStore = useAppStore((s) => s.setProfile);
 
@@ -83,6 +85,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
   const [newExpEnd, setNewExpEnd] = useState("");
   const [newExpCurrent, setNewExpCurrent] = useState(false);
   const [newExpAcademic, setNewExpAcademic] = useState(false);
+  const [newExpContract, setNewExpContract] = useState(false);
   const [creatingExp, setCreatingExp] = useState(false);
 
   const hydrateFromProfile = (data: MasterProfile) => {
@@ -250,6 +253,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
         end_date: newExpCurrent ? "Present" : newExpEnd.trim() || null,
         is_current: newExpCurrent,
         is_academic: newExpAcademic,
+        is_contract: newExpContract,
         bullets_json: [
           {
             text: "Delivered backend services and scalable APIs.",
@@ -266,6 +270,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
       setNewExpEnd("");
       setNewExpCurrent(false);
       setNewExpAcademic(false);
+      setNewExpContract(false);
       setShowNewExpForm(false);
       onNotify("success", `Added experience at ${created.company}.`);
       void useAppStore.getState().fetchProfile(true);
@@ -297,6 +302,7 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
         end_date: exp.end_date?.trim() || null,
         is_current: exp.is_current,
         is_academic: Boolean(exp.is_academic),
+        is_contract: Boolean(exp.is_contract),
         bullets_json: cleanedBullets,
       });
       updateLocalExp(exp.id, () => saved);
@@ -917,20 +923,22 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
               <div
                 className="field"
                 style={{
-                  justifyContent: "flex-end",
+                  justifyContent: "flex-start",
+                  flexWrap: "wrap",
                   paddingBottom: "0.4rem",
                   flexDirection: "row",
-                  gap: "1rem",
+                  gap: "1.25rem",
                   alignItems: "center",
                 }}
               >
                 <label
                   style={{
-                    display: "flex",
+                    display: "inline-flex",
                     alignItems: "center",
                     gap: "0.5rem",
                     fontSize: "0.875rem",
                     cursor: "pointer",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   <input
@@ -938,15 +946,16 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                     checked={newExpCurrent}
                     onChange={(e) => setNewExpCurrent(e.target.checked)}
                   />
-                  Current Role
+                  {t("profile.currentRole")}
                 </label>
                 <label
                   style={{
-                    display: "flex",
+                    display: "inline-flex",
                     alignItems: "center",
                     gap: "0.5rem",
                     fontSize: "0.875rem",
                     cursor: "pointer",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   <input
@@ -954,7 +963,24 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                     checked={newExpAcademic}
                     onChange={(e) => setNewExpAcademic(e.target.checked)}
                   />
-                  Projeto Acadêmico
+                  {t("profile.academicProject")}
+                </label>
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    fontSize: "0.875rem",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={newExpContract}
+                    onChange={(e) => setNewExpContract(e.target.checked)}
+                  />
+                  {t("profile.temporaryContract")}
                 </label>
               </div>
             </div>
@@ -1021,7 +1047,23 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                                 borderColor: "var(--accent, #6366f1)",
                               }}
                             >
-                              Projeto Acadêmico
+                              {t("profile.academicProject")}
+                            </span>
+                          )}
+                          {exp.is_contract && (
+                            <span
+                              className="status-pill"
+                              style={{
+                                fontSize: "0.7rem",
+                                fontWeight: 600,
+                                padding: "0.1rem 0.45rem",
+                                backgroundColor:
+                                  "var(--warning-tint, rgba(234, 179, 8, 0.15))",
+                                color: "var(--warning, #eab308)",
+                                borderColor: "var(--warning, #eab308)",
+                              }}
+                            >
+                              {t("profile.temporaryContract")}
                             </span>
                           )}
                         </div>
@@ -1144,20 +1186,22 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                         <div
                           className="field"
                           style={{
-                            justifyContent: "flex-end",
+                            justifyContent: "flex-start",
+                            flexWrap: "wrap",
                             paddingBottom: "0.4rem",
                             flexDirection: "row",
-                            gap: "1rem",
+                            gap: "1.25rem",
                             alignItems: "center",
                           }}
                         >
                           <label
                             style={{
-                              display: "flex",
+                              display: "inline-flex",
                               alignItems: "center",
                               gap: "0.5rem",
                               fontSize: "0.875rem",
                               cursor: "pointer",
+                              whiteSpace: "nowrap",
                             }}
                           >
                             <input
@@ -1170,15 +1214,16 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                                 }))
                               }
                             />
-                            Currently working here
+                            {t("profile.currentlyWorkingHere")}
                           </label>
                           <label
                             style={{
-                              display: "flex",
+                              display: "inline-flex",
                               alignItems: "center",
                               gap: "0.5rem",
                               fontSize: "0.875rem",
                               cursor: "pointer",
+                              whiteSpace: "nowrap",
                             }}
                           >
                             <input
@@ -1191,7 +1236,29 @@ export function MasterProfileHub({ onNotify }: MasterProfileHubProps) {
                                 }))
                               }
                             />
-                            Projeto Acadêmico
+                            {t("profile.academicProject")}
+                          </label>
+                          <label
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "0.5rem",
+                              fontSize: "0.875rem",
+                              cursor: "pointer",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={Boolean(exp.is_contract)}
+                              onChange={(e) =>
+                                updateLocalExp(exp.id, (cur) => ({
+                                  ...cur,
+                                  is_contract: e.target.checked,
+                                }))
+                              }
+                            />
+                            {t("profile.temporaryContract")}
                           </label>
                         </div>
                       </div>

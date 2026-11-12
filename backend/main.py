@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from backend.app.db import init_db
-from backend.app.logging_config import get_logger, setup_logging
+from backend.app.logging_config import get_logger, get_runtime_logs, setup_logging
 from backend.app.routers.compiler import router as compiler_router
 from backend.app.routers.profile import router as profile_router
 from backend.app.routers.scraper import router as scraper_router
@@ -16,6 +16,8 @@ from backend.app.routers.tailor import router as tailor_router
 
 setup_logging()
 logger = get_logger("careerforge.http")
+
+QUIET_SUCCESS_PATHS = {"/api/system/logs"}
 
 
 @asynccontextmanager
@@ -55,7 +57,7 @@ async def http_request_tracing_middleware(request: Request, call_next):
             logger.error(log_msg)
         elif status >= 400:
             logger.warning(log_msg)
-        else:
+        elif path.rstrip("/") not in QUIET_SUCCESS_PATHS:
             logger.info(log_msg)
 
         return response
@@ -93,6 +95,11 @@ def get_health() -> dict[str, str]:
         "app": "CareerForge OS",
         "version": "0.1.0",
     }
+
+
+@app.get("/api/system/logs")
+def get_system_logs(limit: int = 150) -> dict[str, list[dict[str, str]]]:
+    return {"logs": get_runtime_logs(limit=limit)}
 
 
 @app.get("/{full_path:path}")

@@ -407,7 +407,8 @@ def test_scraper_jobs_list_and_archive_status_update():
             )
             assert start_resp.status_code == 200
             run_id = start_resp.json()["run_id"]
-            client.get(f"/api/scraper/stream/{run_id}")
+            stream_resp = client.get(f"/api/scraper/stream/{run_id}")
+            _ = stream_resp.text
 
         jobs_resp = client.get("/api/scraper/jobs")
         assert jobs_resp.status_code == 200

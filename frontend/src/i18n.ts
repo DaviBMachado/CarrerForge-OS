@@ -31,9 +31,19 @@ export const translations = {
     "settings.geminiKey": "Gemini API Key",
     "settings.openaiKey": "OpenAI API Key",
     "settings.anthropicKey": "Anthropic Claude API Key",
+    "settings.openrouterKey": "OpenRouter API Key",
     "settings.ollamaUrl": "Ollama Base URL",
+    "settings.selectedModel": "Model",
+    "settings.fetchModels": "Fetch Available Models",
+    "settings.fetchingModels": "Fetching...",
     "settings.show": "Show",
     "settings.hide": "Hide",
+
+    // Profile & Experience
+    "profile.academicProject": "Academic Project",
+    "profile.temporaryContract": "Temporary Contract",
+    "profile.currentRole": "Current Role",
+    "profile.currentlyWorkingHere": "Currently working here",
 
     // Studio & Badges
     "studio.modality": "Modality: {type}",
@@ -100,9 +110,19 @@ export const translations = {
     "settings.geminiKey": "Chave de API do Gemini",
     "settings.openaiKey": "Chave de API da OpenAI",
     "settings.anthropicKey": "Chave de API do Anthropic Claude",
+    "settings.openrouterKey": "Chave de API do OpenRouter",
     "settings.ollamaUrl": "URL Base do Ollama",
+    "settings.selectedModel": "Modelo",
+    "settings.fetchModels": "Buscar Modelos Disponíveis",
+    "settings.fetchingModels": "Buscando modelos...",
     "settings.show": "Exibir",
     "settings.hide": "Ocultar",
+
+    // Profile & Experience
+    "profile.academicProject": "Projeto Acadêmico",
+    "profile.temporaryContract": "Contrato Temporário",
+    "profile.currentRole": "Cargo Atual",
+    "profile.currentlyWorkingHere": "Trabalho atualmente aqui",
 
     // Studio & Badges
     "studio.modality": "Modalidade: {type}",

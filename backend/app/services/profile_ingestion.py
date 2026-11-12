@@ -120,6 +120,7 @@ def normalize_parsed_profile(data: dict[str, Any]) -> dict[str, Any]:
                         bullets.append({"text": b.strip(), "tags": []})
 
             is_acad = bool(exp.get("is_academic", default_academic))
+            is_contract = bool(exp.get("is_contract", False))
             parsed.append(
                 {
                     "company": company or ("Universidade" if is_acad else "Empresa"),
@@ -129,6 +130,7 @@ def normalize_parsed_profile(data: dict[str, Any]) -> dict[str, Any]:
                     "end_date": str(exp.get("end_date") or "").strip() or None,
                     "is_current": bool(exp.get("is_current", False)),
                     "is_academic": is_acad,
+                    "is_contract": is_contract,
                     "bullets": bullets,
                 }
             )
@@ -141,7 +143,7 @@ def normalize_parsed_profile(data: dict[str, Any]) -> dict[str, Any]:
             _parse_exp_list(data.get("professional_experiences"), default_academic=False)
         )
         experiences.extend(_parse_exp_list(data.get("academic_projects"), default_academic=True))
-    if "experiences" in data:
+    if "experiences" in data and (not has_split or not experiences):
         experiences.extend(_parse_exp_list(data.get("experiences"), default_academic=False))
 
     return {
@@ -170,45 +172,98 @@ def persist_profile_ingestion(
     assert profile.id is not None, "Profile must have an ID before persisting ingestion"
 
     try:
-        if data.get("full_name"):
+        if data.get("full_name") and not (profile.full_name or "").strip():
             profile.full_name = data["full_name"]
-        if data.get("headline"):
+
+        if data.get("headline") and not (profile.headline or "").strip():
             profile.headline = data["headline"]
-        if data.get("summary_base"):
+        if data.get("summary_base") and not (profile.summary_base or "").strip():
             profile.summary_base = data["summary_base"]
-        if data.get("contact"):
-            profile.contact_json = data["contact"]
-        if data.get("skills"):
-            profile.skills_json = data["skills"]
-        if data.get("languages"):
-            profile.languages_json = data["languages"]
+
+        # Merge contact
+        contact = dict(profile.contact_json or {})
+        for k, v in (data.get("contact") or {}).items():
+            if v and not contact.get(k):
+                contact[k] = v
+        profile.contact_json = contact
+
+        # Merge skills
+        skills = dict(profile.skills_json or {})
+        for cat, items in (data.get("skills") or {}).items():
+            existing_items = list(skills.get(cat) or [])
+            existing_lower = {str(x).lower().strip() for x in existing_items}
+            for item in items:
+                if str(item).lower().strip() not in existing_lower:
+                    existing_items.append(item)
+                    existing_lower.add(str(item).lower().strip())
+            skills[cat] = existing_items
+        profile.skills_json = skills
+
+        # Merge languages
+        langs = list(profile.languages_json or [])
+        langs_lower = {str(x).lower().strip() for x in langs}
+        for lang in data.get("languages") or []:
+            if str(lang).lower().strip() not in langs_lower:
+                langs.append(lang)
+                langs_lower.add(str(lang).lower().strip())
+        profile.languages_json = langs
 
         session.add(profile)
+        session.flush()
 
-        # Remove existing experiences for atomic recreation
+        # Non-destructive merge of experiences by (company, role)
         existing_exps = session.exec(
             select(Experience).where(Experience.profile_id == profile.id)
         ).all()
-        for exp in existing_exps:
-            session.delete(exp)
+        exp_map: dict[tuple[str, str], Experience] = {
+            (e.company.strip().lower(), e.role.strip().lower()): e for e in existing_exps
+        }
 
-        session.flush()
-
-        # Insert extracted experiences
         for exp_data in data.get("experiences", []):
-            new_exp = Experience(
-                user_id=profile.user_id,
-                profile_id=profile.id,
-                company=exp_data["company"],
-                role=exp_data["role"],
-                location=exp_data.get("location"),
-                start_date=exp_data.get("start_date"),
-                end_date=exp_data.get("end_date"),
-                is_current=exp_data.get("is_current", False),
-                is_academic=exp_data.get("is_academic", False),
-                bullets_json=exp_data.get("bullets", []),
-            )
-            session.add(new_exp)
+            comp_key = (exp_data["company"].strip().lower(), exp_data["role"].strip().lower())
+            matched_exp = exp_map.get(comp_key)
+            incoming_bullets = exp_data.get("bullets", [])
+
+            if matched_exp:
+                if not matched_exp.location and exp_data.get("location"):
+                    matched_exp.location = exp_data["location"]
+                if not matched_exp.start_date and exp_data.get("start_date"):
+                    matched_exp.start_date = exp_data["start_date"]
+                if not matched_exp.end_date and exp_data.get("end_date"):
+                    matched_exp.end_date = exp_data["end_date"]
+                if exp_data.get("is_contract"):
+                    matched_exp.is_contract = True
+                if exp_data.get("is_academic"):
+                    matched_exp.is_academic = True
+
+                curr_bullets = list(matched_exp.bullets_json or [])
+                existing_bullet_texts = {
+                    (b.get("text", "") if isinstance(b, dict) else str(b)).strip().lower()
+                    for b in curr_bullets
+                }
+                for b in incoming_bullets:
+                    b_text = (b.get("text", "") if isinstance(b, dict) else str(b)).strip()
+                    if b_text and b_text.lower() not in existing_bullet_texts:
+                        curr_bullets.append(b)
+                        existing_bullet_texts.add(b_text.lower())
+                matched_exp.bullets_json = curr_bullets
+                session.add(matched_exp)
+            else:
+                new_exp = Experience(
+                    user_id=profile.user_id,
+                    profile_id=profile.id,
+                    company=exp_data["company"],
+                    role=exp_data["role"],
+                    location=exp_data.get("location"),
+                    start_date=exp_data.get("start_date"),
+                    end_date=exp_data.get("end_date"),
+                    is_current=exp_data.get("is_current", False),
+                    is_academic=exp_data.get("is_academic", False),
+                    is_contract=exp_data.get("is_contract", False),
+                    bullets_json=incoming_bullets,
+                )
+                session.add(new_exp)
+                exp_map[comp_key] = new_exp
 
         session.commit()
         session.refresh(profile)
