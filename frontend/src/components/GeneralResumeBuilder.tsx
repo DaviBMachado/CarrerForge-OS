@@ -14,18 +14,79 @@ export interface GeneralResumeBuilderProps {
 }
 
 export const OVERFLOW_PARAGRAPH = `
-### Principal Platform Architect — Global Scale Enterprise (2016 – 2020)
-- Led a cross-functional engineering organization of 45 developers delivering mission-critical financial clearing systems across 12 regions.
-- Spearheaded the migration from legacy monolithic batch processors to event-driven microservices, improving system availability from 99.5% to 99.99%.
-- Implemented automated compliance auditing, cryptographic ledger verification, and real-time anomaly detection for institutional portfolios.
-- Authored internal engineering RFCs covering database sharding, zero-downtime schema migrations, and distributed tracing standards.
+### Engineering Architecture & Core Systems Track Record
+Specialized in cloud distributed systems, high-throughput microservices, and automated data pipelines.
+- Architected and delivered mission-critical financial clearing microservices, improving system availability from 99.5% to 99.99%.
+- Spearheaded database partitioning and caching layers, decreasing p99 query latency by 45% across distributed clusters.
+- Implemented automated compliance auditing, cryptographic ledger verification, and real-time anomaly detection workflows.
+- Authored internal engineering RFCs covering database sharding, zero-downtime schema migrations, and distributed tracing.
 - Mentored senior engineers, conducted architectural reviews, and established incident response playbooks that reduced MTTR by 70%.`;
+
+/**
+ * Deterministically sanitizes resume markdown text without LLM calls:
+ * - Normalizes header levels (#, ##, ###) and fixes missing spaces (#Title -> # Title, ####+ -> ###).
+ * - Converts broken/alternate bullet markers (*, •, –, —, +, 1., 1), or indented bullets) to standard `- <text>`.
+ * - Trims superfluous indents and limits consecutive blank lines.
+ */
+export function sanitizeResumeMarkdown(raw: string): string {
+  if (!raw) return "";
+
+  const lines = raw.split(/\r?\n/);
+  const sanitizedLines: string[] = [];
+  let emptyLineCount = 0;
+
+  for (const rawLine of lines) {
+    let line = rawLine.trim();
+
+    if (!line) {
+      emptyLineCount++;
+      if (emptyLineCount <= 1 && sanitizedLines.length > 0) {
+        sanitizedLines.push("");
+      }
+      continue;
+    }
+    emptyLineCount = 0;
+
+    // Standardize headers:
+    // Convert e.g. #Title, ##Section, ###Role, ####Sub -> # Title, ## Section, ### Role, ### Sub
+    const headerMatch = line.match(/^(#{1,6})\s*(.*)$/);
+    if (headerMatch) {
+      let hashes = headerMatch[1];
+      const titleText = headerMatch[2].trim();
+      if (hashes.length >= 4) {
+        hashes = "###";
+      }
+      line = `${hashes} ${titleText}`.trim();
+      sanitizedLines.push(line);
+      continue;
+    }
+
+    // Standardize bullets:
+    // Matches variations: * text, • text, – text, — text, + text, 1. text, 1) text
+    const bulletMatch = line.match(/^([*•–—+]|\d+[.)])\s+(.*)$/);
+    if (bulletMatch) {
+      const bulletText = bulletMatch[2].trim();
+      sanitizedLines.push(`- ${bulletText}`);
+      continue;
+    }
+
+    if (line.startsWith("- ")) {
+      sanitizedLines.push(`- ${line.slice(2).trim()}`);
+      continue;
+    }
+
+    sanitizedLines.push(line);
+  }
+
+  return sanitizedLines.join("\n").trim();
+}
 
 /**
  * Parses lightweight markdown-like resume text into a structured ResumeSpecPayload.
  */
 export function parseTextToSpec(raw: string): ResumeSpecPayload {
-  const lines = raw.split(/\r?\n/);
+  const sanitized = sanitizeResumeMarkdown(raw);
+  const lines = sanitized.split(/\r?\n/);
   let name = "";
   let title = "";
   const contactLines: string[] = [];
@@ -151,13 +212,6 @@ export function generateDynamicParagraph(profile: MasterProfile | null): string 
     return OVERFLOW_PARAGRAPH.trim();
   }
 
-  const companyNames = Array.from(
-    new Set(profile.experiences.map((e) => e.company.trim()).filter(Boolean))
-  );
-  const roleNames = Array.from(
-    new Set(profile.experiences.map((e) => e.role.trim()).filter(Boolean))
-  );
-
   const skillsList: string[] = [];
   if (profile.skills_json) {
     for (const group of Object.values(profile.skills_json)) {
@@ -189,23 +243,24 @@ export function generateDynamicParagraph(profile: MasterProfile | null): string 
   const selectedImpacts = metricBullets.length > 0 ? metricBullets : extractedImpacts;
 
   const topSkills = skillsList.slice(0, 5).join(", ");
-  const companiesStr = companyNames.slice(0, 3).join(", ");
-  const headlineRole = roleNames[0] || profile.headline || "Senior Engineer";
 
   const lines: string[] = [];
-  lines.push(`### Principal Impact & Systems Track Record — ${companiesStr || "Key Achievements"}`);
-  lines.push(
-    `Seasoned ${headlineRole} with verified delivery across ${companiesStr || "enterprise platforms"}.${
-      topSkills ? ` Specialized in ${topSkills} with focus on high throughput, fault tolerance, and measurable efficiency gains.` : ""
-    }`
-  );
+  lines.push(`### Engineering Architecture & Core Systems Track Record`);
+  if (topSkills) {
+    lines.push(
+      `Specialized in ${topSkills} with extensive focus on distributed architectures, high-throughput backend services, and quantified efficiency gains.`
+    );
+  }
 
   if (selectedImpacts.length > 0) {
-    for (const imp of selectedImpacts.slice(0, 4)) {
-      lines.push(`- [${imp.company}] ${imp.text}`);
+    for (const imp of selectedImpacts.slice(0, 5)) {
+      const cleanBullet = imp.text.replace(/^\[[^\]]+\]\s*/, "").trim();
+      lines.push(`- ${cleanBullet}`);
     }
   } else {
-    lines.push(`- Drove architectural modernization and reduced operational friction across ${companiesStr}.`);
+    lines.push(
+      `- Architected and delivered resilient cloud backend workflows, reducing latency and scaling transaction throughput.`
+    );
   }
 
   return lines.join("\n");
@@ -241,6 +296,7 @@ export function GeneralResumeBuilder({ onNotify }: GeneralResumeBuilderProps) {
     "pdf" | "docx" | null
   >(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const [expanding, setExpanding] = useState(false);
 
   // Synchronize on mount with Master Profile from backend / store
   useEffect(() => {
@@ -342,23 +398,41 @@ export function GeneralResumeBuilder({ onNotify }: GeneralResumeBuilderProps) {
     }
   };
 
-  const handleAppendLargeParagraph = async () => {
-    let currentProfile = profile;
-    if (!currentProfile) {
-      try {
-        currentProfile = await fetchProfile();
-      } catch {
-        currentProfile = null;
+  const handleFormatMarkdown = () => {
+    const formatted = sanitizeResumeMarkdown(editorText);
+    setEditorText(formatted);
+    onNotify("success", "Markdown sanitized and formatted.");
+  };
+
+  const handleExpandSection = async () => {
+    setExpanding(true);
+    try {
+      const res = await api.expandResumeSection(editorText);
+      if (res?.expanded_text) {
+        const cleanSection = sanitizeResumeMarkdown(res.expanded_text.trim());
+        setEditorText((prev) => `${prev.trim()}\n\n${cleanSection}`);
+        onNotify("success", "Expanded section generated with AI.");
+        return;
       }
+      throw new Error("No text returned from expand endpoint.");
+    } catch {
+      let currentProfile = profile;
+      if (!currentProfile) {
+        try {
+          currentProfile = await fetchProfile();
+        } catch {
+          currentProfile = null;
+        }
+      }
+      const generated = generateDynamicParagraph(currentProfile);
+      setEditorText((prev) => `${prev.trim()}\n\n${generated}`);
+      onNotify(
+        "success",
+        "Generated expanded section locally from Master Profile."
+      );
+    } finally {
+      setExpanding(false);
     }
-    const generated = generateDynamicParagraph(currentProfile);
-    setEditorText((prev) => `${prev.trim()}\n\n${generated}`);
-    onNotify(
-      "success",
-      currentProfile?.experiences?.length
-        ? "Inserted dynamic impact metrics from Master Profile."
-        : "Inserted sample impact paragraph."
-    );
   };
 
   const handleDownload = async (format: "pdf" | "docx") => {
@@ -515,10 +589,19 @@ export function GeneralResumeBuilder({ onNotify }: GeneralResumeBuilderProps) {
               <button
                 type="button"
                 className="btn btn-sm"
-                onClick={handleAppendLargeParagraph}
-                title="Generate and paste a dense impact paragraph from Master Profile experiences"
+                onClick={handleFormatMarkdown}
+                title="Deterministically sanitize headers and normalize bullet points"
               >
-                + Paste Large Paragraph
+                Format Markdown
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={handleExpandSection}
+                disabled={expanding}
+                title="Expand resume with high-impact quantified achievements from Master Profile"
+              >
+                {expanding ? "Expanding..." : "+ Expand Section"}
               </button>
               <button
                 type="button"

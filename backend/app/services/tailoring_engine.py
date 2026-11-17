@@ -272,7 +272,7 @@ def verify_factual_guardrails(
             spec_chunks.append(block.text)
             if block.type == "subheading" and "|" in block.text:
                 rhs = block.text.split("|", 1)[1].strip()
-                rhs_clean = re.sub(r"\([^)]*\)", "", rhs).strip()
+                rhs_clean = re.sub(r"\[[^\]]*\]|\([^)]*\)", "", rhs).strip()
                 if rhs_clean and allowed_companies:
                     rhs_lower = rhs_clean.lower()
                     if (
@@ -486,9 +486,16 @@ def _normalize_cover_letter(raw_letter: Any) -> str:
             paragraphs[longest_idx] = p1
             paragraphs.insert(longest_idx + 1, p2)
         else:
-            mid = max(1, len(paragraphs[longest_idx]) // 2)
-            p1 = paragraphs[longest_idx][:mid].strip()
-            p2 = paragraphs[longest_idx][mid:].strip()
+            p_text = paragraphs[longest_idx]
+            mid = len(p_text) // 2
+            space_indices = [m.start() for m in re.finditer(r"\s+", p_text)]
+            if space_indices:
+                split_at = min(space_indices, key=lambda i: abs(i - mid))
+                p1 = p_text[:split_at].strip()
+                p2 = p_text[split_at:].strip()
+            else:
+                p1 = p_text[:mid].strip()
+                p2 = p_text[mid:].strip()
             paragraphs[longest_idx] = p1
             paragraphs.insert(longest_idx + 1, p2)
 

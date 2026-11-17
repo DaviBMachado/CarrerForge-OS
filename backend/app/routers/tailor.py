@@ -53,49 +53,6 @@ def _get_user_job(
     return job, profile
 
 
-@router.get("/{job_id}", response_model=TailoringResult)
-def get_tailored_job(
-    job_id: int,
-    session: DBSession,
-    current_user: CurrentUser,
-) -> TailoringResult:
-    job, profile = _get_user_job(session, job_id, current_user)
-    result = get_tailored_artifact(session, job, profile)
-    if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tailored artifact not yet generated for this job",
-        )
-    return result
-
-
-@router.post("/{job_id}", response_model=TailoringResult)
-def run_tailor_job(
-    job_id: int,
-    session: DBSession,
-    orchestrator: LLMClient,
-    current_user: CurrentUser,
-    mode: str = "ats",
-) -> TailoringResult:
-    if mode not in ("ats", "human"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Query parameter 'mode' must be 'ats' or 'human'",
-        )
-    job, profile = _get_user_job(session, job_id, current_user)
-    try:
-        return tailor_job_application(session, job, profile, orchestrator=orchestrator, mode=mode)
-    except LLMConfigurationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except FactualGuardrailError as exc:
-        raise HTTPException(
-            status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
-            detail=str(exc),
-        ) from exc
-    except LLMProviderError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-
 class ExpandSectionRequest(BaseModel):
     current_text: str = ""
 
@@ -163,6 +120,49 @@ def expand_resume_section(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
+
+
+@router.get("/{job_id}", response_model=TailoringResult)
+def get_tailored_job(
+    job_id: int,
+    session: DBSession,
+    current_user: CurrentUser,
+) -> TailoringResult:
+    job, profile = _get_user_job(session, job_id, current_user)
+    result = get_tailored_artifact(session, job, profile)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tailored artifact not yet generated for this job",
+        )
+    return result
+
+
+@router.post("/{job_id}", response_model=TailoringResult)
+def run_tailor_job(
+    job_id: int,
+    session: DBSession,
+    orchestrator: LLMClient,
+    current_user: CurrentUser,
+    mode: str = "ats",
+) -> TailoringResult:
+    if mode not in ("ats", "human"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Query parameter 'mode' must be 'ats' or 'human'",
+        )
+    job, profile = _get_user_job(session, job_id, current_user)
+    try:
+        return tailor_job_application(session, job, profile, orchestrator=orchestrator, mode=mode)
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FactualGuardrailError as exc:
+        raise HTTPException(
+            status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
+            detail=str(exc),
+        ) from exc
+    except LLMProviderError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
 
 @router.get("/{job_id}/gupy-rundown", response_model=GupyRundown)

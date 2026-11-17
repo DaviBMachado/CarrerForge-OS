@@ -727,17 +727,49 @@ class LLMOrchestrator:
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "http://localhost:8000",
+            "X-Title": "CareerForge OS",
+        }
         start_time = time.perf_counter()
         resp = client.post(
             url,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "HTTP-Referer": "http://localhost:8000",
-                "X-Title": "CareerForge OS",
-            },
+            headers=headers,
             json=payload,
         )
         elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+        # If model does not support response_format: {"type": "json_object"}, retry with prompt directive
+        if (
+            resp.status_code == 400
+            and json_mode
+            and any(
+                term in resp.text.lower() for term in ("response_format", "json_object", "format")
+            )
+        ):
+            logger.warning(
+                f"OpenRouter model '{effective_model}' rejected response_format; retrying with system prompt JSON directive."
+            )
+            fallback_payload = dict(payload)
+            fallback_payload.pop("response_format", None)
+            json_instruction = (
+                "Respond strictly with a valid JSON object without markdown wrappers."
+            )
+            fallback_messages: list[dict[str, str]] = []
+            for msg in messages:
+                fallback_messages.append(dict(msg))
+            if fallback_messages and fallback_messages[0]["role"] == "system":
+                fallback_messages[0]["content"] = (
+                    f"{fallback_messages[0]['content']}\n\n{json_instruction}".strip()
+                )
+            else:
+                fallback_messages.insert(0, {"role": "system", "content": json_instruction})
+            fallback_payload["messages"] = fallback_messages
+
+            start_time = time.perf_counter()
+            resp = client.post(url, headers=headers, json=fallback_payload)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
         if resp.status_code >= 400:
             err_msg = _redact_secret(resp.text, api_key)
             logger.error(

@@ -19,6 +19,8 @@ from backend.app.services.resume_compiler import (
 from backend.app.services.settings import update_settings
 from backend.app.services.tailoring_engine import (
     FactualGuardrailError,
+    _normalize_cover_letter,
+    _serialize_profile_for_prompt,
     build_ats_system_prompt,
     build_human_curation_system_prompt,
     build_tailoring_system_prompt,
@@ -410,6 +412,7 @@ def test_contract_experience_app_testable_milestone(
     candidate_setup: tuple[User, MasterProfile, JobPosting],
 ):
     _, profile, job = candidate_setup
+    assert profile.id is not None
 
     # Add a temporary contract experience
     contract_exp = Experience(
@@ -993,6 +996,102 @@ def test_tailor_router_modes_and_validation(
             assert resp_invalid.status_code == 400
             assert (
                 "Query parameter 'mode' must be 'ats' or 'human'" in resp_invalid.json()["detail"]
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_normalize_cover_letter_word_boundary_split():
+    long_single_paragraph = (
+        "This is an atypical cover letter paragraph without any periods or exclamation marks "
+        "that needs to be split across multiple paragraphs while maintaining word boundaries "
+        "and never slicing words down the middle arbitrarily"
+    )
+    result = _normalize_cover_letter(long_single_paragraph)
+    paras = result.split("\n\n")
+    assert len(paras) == 3
+    for word in long_single_paragraph.split():
+        assert any(word in p.split() for p in paras)
+
+
+def test_guardrail_tolerates_bracketed_contract_subheadings(
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    _, profile, _ = candidate_setup
+    spec = ResumeSpec(
+        name=profile.full_name or "Candidate",
+        title="Software Engineer",
+        sections=[
+            ResumeSection(
+                title="Professional Experience",
+                blocks=[
+                    ResumeBlock(
+                        type="subheading",
+                        text="Software Engineering Intern | Itaú Unibanco [Contract] (02/2024 - 06/2025)",
+                    ),
+                    ResumeBlock(
+                        type="bullet",
+                        text="Built Python REST integrations syncing 10,000+ records/day.",
+                    ),
+                ],
+            )
+        ],
+    )
+    verify_factual_guardrails(spec, profile)
+
+
+def test_serialize_profile_includes_is_contract(
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    _, profile, _ = candidate_setup
+    assert profile.id is not None
+    exp = Experience(
+        profile_id=profile.id,
+        company="Contractor Corp",
+        role="Cloud Consultant",
+        is_contract=True,
+    )
+    data = _serialize_profile_for_prompt(profile, [exp])
+    assert "experiences" in data
+    assert len(data["experiences"]) == 1
+    assert data["experiences"][0]["is_contract"] is True
+
+
+def test_expand_resume_section_endpoint(
+    session: Session,
+    candidate_setup: tuple[User, MasterProfile, JobPosting],
+):
+    from fastapi.testclient import TestClient
+
+    user, _, _ = candidate_setup
+
+    def override_get_db():
+        yield session
+
+    class MockOrchestrator:
+        def generate(self, prompt: str, system_prompt: str, temperature: float = 0.2) -> str:
+            assert "Master Profile data:" in prompt
+            assert "Impersonal style" in system_prompt
+            return "```markdown\n### Engineering Architecture\n- Architected high throughput pipelines.\n```"
+
+    from backend.app.routers.tailor import get_llm_orchestrator
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_llm_orchestrator] = lambda: MockOrchestrator()
+    try:
+        with TestClient(app) as client:
+            headers = {"X-User-Id": str(user.id)}
+            resp = client.post(
+                "/api/tailor/expand-section",
+                json={"current_text": "# Davi Machado\n## Experience"},
+                headers=headers,
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "expanded_text" in data
+            assert (
+                data["expanded_text"]
+                == "### Engineering Architecture\n- Architected high throughput pipelines."
             )
     finally:
         app.dependency_overrides.clear()

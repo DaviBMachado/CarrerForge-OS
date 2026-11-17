@@ -170,9 +170,11 @@ export function SettingsModal({
     try {
       const updated = await api.saveSettings({
         active_provider: form.active_provider,
+        selected_model: form.selected_model ?? "",
         gemini_api_key: form.gemini_api_key ?? "",
         openai_api_key: form.openai_api_key ?? "",
         anthropic_api_key: form.anthropic_api_key ?? "",
+        openrouter_api_key: form.openrouter_api_key ?? "",
         ollama_base_url: form.ollama_base_url,
         scraper_headless: form.scraper_headless,
         scraper_timeout: Number(form.scraper_timeout) || 30,
@@ -289,12 +291,16 @@ export function SettingsModal({
               id="setting-active-provider"
               className="select"
               value={form.active_provider}
-              onChange={(e) =>
+              onChange={(e) => {
+                const nextProvider = e.target.value as LLMProvider;
                 setForm((prev) => ({
                   ...prev,
-                  active_provider: e.target.value as LLMProvider,
-                }))
-              }
+                  active_provider: nextProvider,
+                  selected_model: "",
+                }));
+                setAvailableModels([]);
+                setModelFetchMsg(null);
+              }}
             >
               {PROVIDERS.map((p) => (
                 <option key={p.value} value={p.value}>
