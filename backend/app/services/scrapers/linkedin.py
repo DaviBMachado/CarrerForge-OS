@@ -35,7 +35,67 @@ def _clean_linkedin_url(url: str | None) -> str | None:
 
 
 def parse_linkedin_html(raw_html: str) -> list[ScrapedJob]:
-    # shortcut: regex parser on standard and authenticated card markup, upgrade to DOM/BS4 if LinkedIn nesting shifts
+    # 1. Parse modern Flagship 3 componentkey blocks if present
+    modern_matches = re.findall(
+        r'componentkey=["\']job-card-component-ref-(\d+)["\'][^>]*>(.*?)(?=<div[^>]*componentkey=|$)',
+        raw_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if modern_matches:
+        seen = set()
+        modern_jobs = []
+        for ext_id, inner in modern_matches:
+            if ext_id in seen:
+                continue
+            seen.add(ext_id)
+            title = _extract_first(r'<span[^>]*aria-hidden=["\']true["\'][^>]*>(.*?)</span>', inner)
+
+            p_matches = re.findall(r'<p[^>]*>(.*?)</p>', inner, flags=re.IGNORECASE | re.DOTALL)
+            p_texts = [_strip_tags(p) for p in p_matches if _strip_tags(p)]
+            company = ""
+            location = ""
+            for p in p_texts:
+                if title and title.lower() in p.lower():
+                    continue
+                if not company:
+                    company = p
+                elif not location:
+                    location = p
+                    break
+
+            if not title or not company:
+                clean_text = _strip_tags(inner)
+                lines = [s.strip() for s in clean_text.split("  ") if s.strip()]
+                if not title and lines:
+                    title = lines[0]
+                if not company and len(lines) > 1:
+                    company = lines[1]
+                if not location and len(lines) > 2:
+                    location = lines[2]
+
+            if title and company:
+                remote_type = (
+                    "remote"
+                    if location and ("remoto" in location.lower() or "remote" in location.lower())
+                    else None
+                )
+                modern_jobs.append(
+                    ScrapedJob(
+                        platform="linkedin",
+                        external_id=ext_id,
+                        title=title,
+                        company=company,
+                        location=location or None,
+                        remote_type=remote_type,
+                        description="",
+                        url=f"https://www.linkedin.com/jobs/view/{ext_id}/",
+                        language="en",
+                    )
+                )
+        if modern_jobs:
+            return modern_jobs
+
+    # 2. Classic standard and authenticated card markup
     blocks = re.findall(
         r"<li[^>]*data-occludable-job-id=[^>]*>.*?</li>|<div[^>]*base-search-card[^>]*>.*?</div>\s*</li>|<li[^>]*class=[\"'][^\"']*jobs-search-results__list-item[^\"']*[\"'][^>]*>.*?</li>|<div[^>]*class=[\"'][^\"']*job-card-container[^\"']*[\"'][^>]*>.*?</div>",
         raw_html,
@@ -166,8 +226,11 @@ async def scrape_linkedin_jobs(
                         f"LinkedIn redirected to {page.url}. Authwall/checkpoint detected. Please verify or refresh login session in Job Radar."
                     )
 
-            # Attempt waiting for either authenticated or public cards to populate
+            # Attempt waiting for either modern, authenticated or public cards to populate
             for selector in (
+                '[componentkey*="job-card-component"]',
+                '[componentkey*="job"]',
+                '[data-testid="lazy-column"]',
                 "div.job-card-container",
                 "li.jobs-search-results__list-item",
                 "div.base-search-card",
@@ -187,10 +250,62 @@ async def scrape_linkedin_jobs(
             except Exception:
                 pass
 
-            # Extract via live DOM query with support for both authenticated and guest DOMs
+            # Extract via live DOM query with support for modern Flagship 3, authenticated and guest DOMs
             dom_extracted = await page.evaluate(
                 """() => {
                     const results = [];
+                    const seenIds = new Set();
+
+                    // 1. Modern Flagship 3 job cards (componentkey="job-card-component-ref-<id>")
+                    const modernNodes = document.querySelectorAll('[componentkey*="job-card-component-ref-"], [componentkey*="job-card-component"]');
+                    for (const node of modernNodes) {
+                        const ckey = node.getAttribute('componentkey') || '';
+                        const match = ckey.match(/ref-(\\d+)/);
+                        const extId = match ? match[1] : '';
+                        if (extId && seenIds.has(extId)) continue;
+                        if (extId) seenIds.add(extId);
+
+                        const titleEl = node.querySelector('span[aria-hidden="true"], strong, h3, a');
+                        let title = titleEl ? titleEl.innerText.trim() : '';
+
+                        const pEls = Array.from(node.querySelectorAll('p'))
+                            .map(p => p.innerText.trim())
+                            .filter(Boolean);
+                        let company = '';
+                        let location = '';
+
+                        for (const p of pEls) {
+                            const pLow = p.toLowerCase();
+                            const tLow = title.toLowerCase();
+                            if (pLow === tLow || (tLow && pLow.includes(tLow)) || pLow.includes('vaga verificada') || pLow.includes('selecionada')) {
+                                continue;
+                            }
+                            if (!company) {
+                                company = p;
+                            } else if (!location && p !== company) {
+                                location = p;
+                                break;
+                            }
+                        }
+
+                        if (!title || !company) {
+                            const lines = (node.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
+                            if (!title && lines.length > 0) title = lines[0];
+                            if (!company && lines.length > 1) company = lines[1];
+                            if (!location && lines.length > 2) location = lines[2];
+                        }
+
+                        const url = extId ? `https://www.linkedin.com/jobs/view/${extId}/` : '';
+                        if (title && company) {
+                            results.push({ title, company, location, url, external_id: extId });
+                        }
+                    }
+
+                    if (results.length > 0) {
+                        return results;
+                    }
+
+                    // 2. Classic authenticated and guest DOM markup
                     const selectors = [
                         'li.jobs-search-results__list-item',
                         'div.job-card-container',

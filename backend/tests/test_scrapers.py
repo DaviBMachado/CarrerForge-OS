@@ -154,6 +154,43 @@ def test_parse_linkedin_authenticated_html():
     assert first.url == "https://www.linkedin.com/jobs/view/55667788/"
 
 
+def test_parse_linkedin_flagship3_componentkey_html():
+    sample_html = """
+    <div data-testid="lazy-column">
+      <div componentkey="job-card-component-ref-99887766">
+        <div>
+          <span aria-hidden="true">Staff Backend Engineer</span>
+          <p class="company">FactSet Corp</p>
+          <p class="location">São Paulo, SP (Remoto)</p>
+          <p class="status">Visto</p>
+        </div>
+      </div>
+      <div componentkey="job-card-component-ref-11223344">
+        <div>
+          <span aria-hidden="true">Senior Python Architect</span>
+          <p class="company">CloudTech Solutions</p>
+          <p class="location">São Paulo, SP</p>
+        </div>
+      </div>
+    </div>
+    """
+    jobs = parse_linkedin_html(sample_html)
+    assert len(jobs) == 2
+    j1 = jobs[0]
+    assert j1.external_id == "99887766"
+    assert j1.title == "Staff Backend Engineer"
+    assert j1.company == "FactSet Corp"
+    assert "Remoto" in (j1.location or "")
+    assert j1.remote_type == "remote"
+    assert j1.url == "https://www.linkedin.com/jobs/view/99887766/"
+
+    j2 = jobs[1]
+    assert j2.external_id == "11223344"
+    assert j2.title == "Senior Python Architect"
+    assert j2.company == "CloudTech Solutions"
+    assert j2.url == "https://www.linkedin.com/jobs/view/11223344/"
+
+
 def test_parse_gupy_html_extracts_fields_and_requirements():
     jobs = parse_gupy_html(GUPY_SAMPLE_HTML)
     assert len(jobs) == 2
