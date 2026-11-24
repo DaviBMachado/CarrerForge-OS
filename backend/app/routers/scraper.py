@@ -7,7 +7,7 @@ from sqlmodel import Session, col, select
 
 from backend.app.auth import CurrentUser
 from backend.app.db import get_db
-from backend.app.models import JobPosting
+from backend.app.models import Experience, JobPosting, MasterProfile
 from backend.app.services.browser_manager import (
     close_interactive_session,
     get_session_status,
@@ -15,12 +15,15 @@ from backend.app.services.browser_manager import (
     open_interactive_session,
     verify_interactive_session,
 )
+from backend.app.services.scrapers.deduplicator import upsert_scraped_jobs
 from backend.app.services.scrapers.runner import (
     RUNS,
     start_scraper_run,
     stop_scraper_run,
     stream_run_events,
 )
+from backend.app.services.scrapers.single_extractor import scrape_job_by_url
+from backend.app.services.tailoring_engine import extract_ats_keywords
 
 router = APIRouter(prefix="/scraper", tags=["scraper"])
 
@@ -141,6 +144,95 @@ async def stop_scraper(
     if not run:
         return {"status": "idle", "run_id": target_id or ""}
     return {"status": run.status, "run_id": run.run_id}
+
+
+class JobExtractUrlRequest(BaseModel):
+    url: str = Field(..., min_length=5)
+
+
+@router.post("/extract-url", response_model=JobPosting)
+async def extract_job_from_url(
+    payload: JobExtractUrlRequest,
+    current_user: CurrentUser,
+    session: DBSession,
+) -> JobPosting:
+    assert current_user.id is not None
+    try:
+        scraped_job = await scrape_job_by_url(payload.url, headless=True)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Não foi possível extrair a vaga do link fornecido: {exc}. Você pode cadastrar a vaga manualmente no Estúdio de Personalização.",
+        )
+
+    saved_jobs = upsert_scraped_jobs(session, current_user.id, [scraped_job])
+    if not saved_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Falha ao salvar a vaga extraída.",
+        )
+    return saved_jobs[0]
+
+
+class ManualJobCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1)
+    company: str = Field(..., min_length=1)
+    raw_description: str = Field(..., min_length=1)
+    location: str | None = None
+    remote_type: str | None = None
+    url: str | None = None
+    language: str = "en"
+
+
+@router.post("/jobs", response_model=JobPosting, status_code=status.HTTP_201_CREATED)
+def create_manual_job(
+    payload: ManualJobCreateRequest,
+    current_user: CurrentUser,
+    session: DBSession,
+) -> JobPosting:
+    assert current_user.id is not None
+    title = payload.title.strip()
+    company = payload.company.strip()
+    raw_desc = payload.raw_description.strip()
+    if not title or not company or not raw_desc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Title, company, and raw_description must not be empty.",
+        )
+
+    profile = session.exec(
+        select(MasterProfile).where(MasterProfile.user_id == current_user.id)
+    ).first()
+    experiences = (
+        list(session.exec(select(Experience).where(Experience.profile_id == profile.id)).all())
+        if profile and profile.id
+        else []
+    )
+
+    match_pct = None
+    if profile:
+        job_kws, _, pct = extract_ats_keywords(raw_desc, profile, experiences)
+        match_pct = pct if job_kws else 0
+
+    job = JobPosting(
+        user_id=current_user.id,
+        platform="manual",
+        external_id=None,
+        title=title,
+        company=company,
+        location=payload.location.strip() if payload.location and payload.location.strip() else None,
+        remote_type=payload.remote_type.strip() if payload.remote_type and payload.remote_type.strip() else None,
+        url=payload.url.strip() if payload.url and payload.url.strip() else None,
+        raw_description=raw_desc,
+        cleaned_text=raw_desc,
+        language=payload.language or "en",
+        status="discovered",
+        match_percentage=match_pct,
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    return job
 
 
 class JobStatusUpdateRequest(BaseModel):

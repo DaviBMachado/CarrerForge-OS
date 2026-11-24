@@ -35,15 +35,15 @@ def _clean_linkedin_url(url: str | None) -> str | None:
 
 
 def parse_linkedin_html(raw_html: str) -> list[ScrapedJob]:
-    # shortcut: regex parser on standard card markup, upgrade to DOM/BS4 if LinkedIn nesting shifts
+    # shortcut: regex parser on standard and authenticated card markup, upgrade to DOM/BS4 if LinkedIn nesting shifts
     blocks = re.findall(
-        r"<li[^>]*data-occludable-job-id=[^>]*>.*?</li>|<div[^>]*base-search-card[^>]*>.*?</div>\s*</li>",
+        r"<li[^>]*data-occludable-job-id=[^>]*>.*?</li>|<div[^>]*base-search-card[^>]*>.*?</div>\s*</li>|<li[^>]*class=[\"'][^\"']*jobs-search-results__list-item[^\"']*[\"'][^>]*>.*?</li>|<div[^>]*class=[\"'][^\"']*job-card-container[^\"']*[\"'][^>]*>.*?</div>",
         raw_html,
         flags=re.IGNORECASE | re.DOTALL,
     )
     if not blocks:
         blocks = re.findall(
-            r"<div[^>]*class=[\"'][^\"']*base-search-card[^\"']*[\"'][^>]*>.*?</div>",
+            r"<div[^>]*class=[\"'][^\"']*(?:base-search-card|job-card-container)[^\"']*[\"'][^>]*>.*?</div>",
             raw_html,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -52,10 +52,20 @@ def parse_linkedin_html(raw_html: str) -> list[ScrapedJob]:
     for block in blocks:
         ext_id = _extract_first(r'data-occludable-job-id=["\']([^"\']+)["\']', block)
         if not ext_id:
+            ext_id = _extract_first(r'data-job-id=["\']([^"\']+)["\']', block)
+        if not ext_id:
             ext_id = _extract_first(r"urn:li:jobPosting:([0-9A-Za-z_-]+)", block)
 
         url_match = re.search(
-            r'<a[^>]*class=["\'][^"\']*base-card__full-link[^"\']*["\'][^>]*href=["\']([^"\']+)["\']',
+            r'<a[^>]*href=["\']([^"\']+)["\'][^>]*class=["\'][^"\']*(?:base-card__full-link|job-card-container__link|job-card-list__title)[^"\']*',
+            block,
+            flags=re.IGNORECASE,
+        ) or re.search(
+            r'<a[^>]*class=["\'][^"\']*(?:base-card__full-link|job-card-container__link|job-card-list__title)[^"\']*["\'][^>]*href=["\']([^"\']+)["\']',
+            block,
+            flags=re.IGNORECASE,
+        ) or re.search(
+            r'<a[^>]*href=["\'](https?://[^"\']*linkedin\.com/jobs/view/[^"\']+)["\']',
             block,
             flags=re.IGNORECASE,
         )
@@ -66,19 +76,25 @@ def parse_linkedin_html(raw_html: str) -> list[ScrapedJob]:
             ext_id = _extract_first(r"/jobs/view/([^/?#]+)", clean_url)
 
         title = _extract_first(
-            r'<h3[^>]*class=["\'][^"\']*base-search-card__title[^"\']*["\'][^>]*>(.*?)</h3>',
+            r'<(?:h3|a|strong)[^>]*class=["\'][^"\']*(?:base-search-card__title|job-card-list__title|job-card-container__link)[^"\']*["\'][^>]*>(.*?)</(?:h3|a|strong)>',
+            block,
+        ) or _extract_first(
+            r'<h3[^>]*>(.*?)</h3>',
             block,
         )
         company = _extract_first(
-            r'<h4[^>]*class=["\'][^"\']*base-search-card__subtitle[^"\']*["\'][^>]*>(.*?)</h4>',
+            r'<(?:h4|span|div|a)[^>]*class=["\'][^"\']*(?:base-search-card__subtitle|job-card-container__primary-description|job-card-container__company-name)[^"\']*["\'][^>]*>(.*?)</(?:h4|span|div|a)>',
+            block,
+        ) or _extract_first(
+            r'<h4[^>]*>(.*?)</h4>',
             block,
         )
         location = _extract_first(
-            r'<span[^>]*class=["\'][^"\']*job-search-card__location[^"\']*["\'][^>]*>(.*?)</span>',
+            r'<(?:span|li)[^>]*class=["\'][^"\']*(?:job-search-card__location|job-card-container__metadata-item)[^"\']*["\'][^>]*>(.*?)</(?:span|li)>',
             block,
         )
         emp_type = _extract_first(
-            r'<span[^>]*class=["\'][^"\']*job-search-card__employment-type[^"\']*["\'][^>]*>(.*?)</span>',
+            r'<span[^>]*class=["\'][^"\']*(?:job-search-card__employment-type|job-card-container__metadata-item)[^"\']*["\'][^>]*>(.*?)</span>',
             block,
         )
         description = (
@@ -147,7 +163,7 @@ async def scrape_linkedin_jobs(
             if "authwall" in curr_url or "checkpoint" in curr_url or "login" in curr_url:
                 if on_log:
                     on_log(
-                        "LinkedIn redirected to authwall/login. Please verify or refresh login session in Job Radar."
+                        f"LinkedIn redirected to {page.url}. Authwall/checkpoint detected. Please verify or refresh login session in Job Radar."
                     )
 
             # Attempt waiting for either authenticated or public cards to populate
@@ -156,6 +172,7 @@ async def scrape_linkedin_jobs(
                 "li.jobs-search-results__list-item",
                 "div.base-search-card",
                 "li[data-occludable-job-id]",
+                "div.job-search-card",
             ):
                 try:
                     await page.wait_for_selector(selector, timeout=4000)
@@ -178,13 +195,14 @@ async def scrape_linkedin_jobs(
                         'li.jobs-search-results__list-item',
                         'div.job-card-container',
                         'div.base-search-card',
-                        'li[data-occludable-job-id]'
+                        'li[data-occludable-job-id]',
+                        'div.job-search-card'
                     ];
                     const nodes = document.querySelectorAll(selectors.join(', '));
                     for (const node of nodes) {
-                        const titleEl = node.querySelector('.job-card-list__title, .base-search-card__title, a[data-control-name="job_card_click"], h3');
-                        const companyEl = node.querySelector('.job-card-container__primary-description, .base-search-card__subtitle, .job-card-container__company-name, h4');
-                        const locEl = node.querySelector('.job-card-container__metadata-item, .job-search-card__location, span.job-card-container__metadata-wrapper');
+                        const titleEl = node.querySelector('.job-card-list__title, .base-search-card__title, a[data-control-name="job_card_click"], a.job-card-container__link, h3, strong');
+                        const companyEl = node.querySelector('.job-card-container__primary-description, .base-search-card__subtitle, .job-card-container__company-name, h4, span.job-card-container__primary-description');
+                        const locEl = node.querySelector('.job-card-container__metadata-item, .job-search-card__location, span.job-card-container__metadata-wrapper, li.job-card-container__metadata-item');
                         const linkEl = node.querySelector('a.job-card-container__link, a.base-card__full-link, a[href*="/jobs/view/"], a');
                         const title = titleEl ? titleEl.innerText.trim() : '';
                         const company = companyEl ? companyEl.innerText.trim() : '';

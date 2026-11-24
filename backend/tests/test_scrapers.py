@@ -109,6 +109,22 @@ def session():
         yield sess
 
 
+LINKEDIN_AUTH_SAMPLE_HTML = """
+<ul class="jobs-search-results__list">
+  <li class="jobs-search-results__list-item" data-occludable-job-id="55667788">
+    <div class="job-card-container">
+      <a class="job-card-list__title" href="https://www.linkedin.com/jobs/view/55667788/">
+        Lead Systems Engineer
+      </a>
+      <span class="job-card-container__primary-description">Innovate AI</span>
+      <span class="job-card-container__metadata-item">Remote, Brazil</span>
+      <div class="jobs-description__content">Architect scalable distributed services.</div>
+    </div>
+  </li>
+</ul>
+"""
+
+
 def test_parse_linkedin_html_extracts_fields():
     jobs = parse_linkedin_html(LINKEDIN_SAMPLE_HTML)
     assert len(jobs) == 2
@@ -122,6 +138,20 @@ def test_parse_linkedin_html_extracts_fields():
     assert first.employment_type == "Full-time"
     assert "Python and FastAPI specialist" in first.description
     assert first.url == "https://www.linkedin.com/jobs/view/3812345678/"
+
+
+def test_parse_linkedin_authenticated_html():
+    jobs = parse_linkedin_html(LINKEDIN_AUTH_SAMPLE_HTML)
+    assert len(jobs) == 1
+    first = jobs[0]
+    assert first.platform == "linkedin"
+    assert first.external_id == "55667788"
+    assert first.title == "Lead Systems Engineer"
+    assert first.company == "Innovate AI"
+    assert "Remote" in (first.location or "")
+    assert first.remote_type == "remote"
+    assert "Architect scalable distributed services" in first.description
+    assert first.url == "https://www.linkedin.com/jobs/view/55667788/"
 
 
 def test_parse_gupy_html_extracts_fields_and_requirements():
@@ -590,3 +620,131 @@ def test_upsert_scraped_jobs_calculates_and_persists_match_percentage(session: S
 
     assert saved_a.match_percentage == 100
     assert saved_b.match_percentage == 50
+
+
+def test_is_job_url_detection():
+    from backend.app.services.scrapers.single_extractor import is_job_url
+
+    assert is_job_url("https://www.linkedin.com/jobs/view/123456789") is True
+    assert is_job_url("http://empresa.gupy.io/jobs/98765") is True
+    assert is_job_url("https://careers.google.com/jobs/results/123") is True
+    assert is_job_url("Python Backend Engineer") is False
+    assert is_job_url("São Paulo, Brazil") is False
+    assert is_job_url("") is False
+
+
+def test_extract_job_from_url_endpoint():
+    fake_job = ScrapedJob(
+        platform="linkedin",
+        external_id="ext-url-123",
+        title="Direct Link Engineer",
+        company="DirectCorp",
+        location="Remote",
+        remote_type="remote",
+        description="Extracted directly from URL",
+        url="https://www.linkedin.com/jobs/view/ext-url-123/",
+    )
+
+    with (
+        TestClient(app) as client,
+        patch(
+            "backend.app.routers.scraper.scrape_job_by_url",
+            new_callable=AsyncMock,
+            return_value=fake_job,
+        ),
+    ):
+        res = client.post(
+            "/api/scraper/extract-url",
+            headers={"X-User-Id": "10"},
+            json={"url": "https://www.linkedin.com/jobs/view/ext-url-123/"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["title"] == "Direct Link Engineer"
+        assert data["company"] == "DirectCorp"
+        assert data["user_id"] == 10
+        assert data["external_id"] == "ext-url-123"
+
+
+def test_extract_job_from_url_failure_returns_helpful_message():
+    with (
+        TestClient(app) as client,
+        patch(
+            "backend.app.routers.scraper.scrape_job_by_url",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Authwall encountered"),
+        ),
+    ):
+        res = client.post(
+            "/api/scraper/extract-url",
+            headers={"X-User-Id": "10"},
+            json={"url": "https://www.linkedin.com/jobs/view/blocked-job/"},
+        )
+        assert res.status_code == 400
+        data = res.json()
+        assert "Não foi possível extrair a vaga do link" in data["detail"]
+        assert "Estúdio de Personalização" in data["detail"]
+
+
+def test_create_manual_job_endpoint_and_tenant_isolation():
+    with TestClient(app) as client:
+        # User 1 creates manual job
+        res_u1 = client.post(
+            "/api/scraper/jobs",
+            headers={"X-User-Id": "20"},
+            json={
+                "title": "Staff Backend Architect",
+                "company": "Custom Enterprises",
+                "location": "São Paulo (Hybrid)",
+                "remote_type": "hybrid",
+                "raw_description": "We need a specialist in Python and microservices.",
+            },
+        )
+        assert res_u1.status_code == 201
+        job_u1 = res_u1.json()
+        assert job_u1["title"] == "Staff Backend Architect"
+        assert job_u1["company"] == "Custom Enterprises"
+        assert job_u1["platform"] == "manual"
+        assert job_u1["status"] == "discovered"
+        assert job_u1["user_id"] == 20
+        assert job_u1["id"] is not None
+
+        # User 2 lists jobs: must not see User 1's manual job
+        res_list_u2 = client.get("/api/scraper/jobs", headers={"X-User-Id": "21"})
+        assert res_list_u2.status_code == 200
+        jobs_u2 = res_list_u2.json()
+        assert not any(j["id"] == job_u1["id"] for j in jobs_u2)
+
+        # User 1 lists jobs: sees the manual job
+        res_list_u1 = client.get("/api/scraper/jobs", headers={"X-User-Id": "20"})
+        assert res_list_u1.status_code == 200
+        jobs_u1 = res_list_u1.json()
+        assert any(j["id"] == job_u1["id"] for j in jobs_u1)
+
+
+def test_create_manual_job_validation_errors():
+    with TestClient(app) as client:
+        # Missing title
+        res_no_title = client.post(
+            "/api/scraper/jobs",
+            headers={"X-User-Id": "20"},
+            json={"title": "  ", "company": "Acme", "raw_description": "Description"},
+        )
+        assert res_no_title.status_code in (400, 422)
+
+        # Missing company
+        res_no_comp = client.post(
+            "/api/scraper/jobs",
+            headers={"X-User-Id": "20"},
+            json={"title": "Dev", "company": "", "raw_description": "Description"},
+        )
+        assert res_no_comp.status_code in (400, 422)
+
+        # Missing description
+        res_no_desc = client.post(
+            "/api/scraper/jobs",
+            headers={"X-User-Id": "20"},
+            json={"title": "Dev", "company": "Acme", "raw_description": "   "},
+        )
+        assert res_no_desc.status_code in (400, 422)
+

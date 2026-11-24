@@ -135,6 +135,16 @@ export interface JobPostingItem {
   created_at: string;
 }
 
+export interface ManualJobCreatePayload {
+  title: string;
+  company: string;
+  raw_description: string;
+  location?: string | null;
+  remote_type?: string | null;
+  url?: string | null;
+  language?: string;
+}
+
 export interface ScraperSessionStatus {
   authenticated: boolean;
   linkedin: boolean;
@@ -382,6 +392,16 @@ export const api = {
       body: JSON.stringify({ run_id: runId ?? null }),
     }),
   getScrapedJobs: () => request<JobPostingItem[]>("/api/scraper/jobs"),
+  createManualJob: (payload: ManualJobCreatePayload) =>
+    request<JobPostingItem>("/api/scraper/jobs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  extractJobFromUrl: (url: string) =>
+    request<JobPostingItem>("/api/scraper/extract-url", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
   updateJobStatus: (jobId: number, status: string) =>
     request<JobPostingItem>(`/api/scraper/jobs/${jobId}/status`, {
       method: "PATCH",

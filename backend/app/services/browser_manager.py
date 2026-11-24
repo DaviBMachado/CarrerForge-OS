@@ -94,6 +94,9 @@ def _merge_and_save_state(new_state: dict[str, Any]) -> None:
         merged[key] = c
     for c in new_state.get("cookies", []):
         key = (str(c.get("domain", "")), str(c.get("name", "")), str(c.get("path", "/")))
+        # Do not overwrite valid non-empty cookie value with an empty string
+        if key in merged and merged[key].get("value") and not c.get("value"):
+            continue
         merged[key] = c
 
     combined_state = {
@@ -253,7 +256,8 @@ def _dump_sqlite_to_state() -> None:
                 cur = conn.cursor()
                 cur.execute("SELECT host_key, name, value FROM cookies")
                 for host_key, name, value in cur.fetchall():
-                    cookies.append({"name": name, "domain": host_key, "value": value or ""})
+                    if value and str(value).strip():
+                        cookies.append({"name": name, "domain": host_key, "value": str(value)})
             finally:
                 conn.close()
         except Exception:

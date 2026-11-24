@@ -200,3 +200,39 @@ def test_platform_independent_login_lifecycle(client: TestClient, temp_session_d
         # 3. Gupy is still unauthenticated
         res_gupy_verify = client.post("/api/scraper/session/verify", json={"platform": "gupy"})
         assert res_gupy_verify.status_code == 400
+
+
+def test_valid_cookies_not_overwritten_by_empty_sqlite_values(temp_session_dir: Path):
+    import json
+    import sqlite3
+
+    temp_session_dir.mkdir(parents=True, exist_ok=True)
+    state_file = temp_session_dir / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "cookies": [
+                    {"name": "li_at", "domain": ".linkedin.com", "path": "/", "value": "valid_secret_123"},
+                ],
+                "origins": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cookie_db = temp_session_dir / "Default" / "Network" / "Cookies"
+    cookie_db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(cookie_db)
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT)")
+    # Chromium leaves value empty when encrypted_value is used
+    cur.execute("INSERT INTO cookies VALUES ('.linkedin.com', 'li_at', '')")
+    conn.commit()
+    conn.close()
+
+    browser_manager._dump_sqlite_to_state()
+
+    saved_data = json.loads(state_file.read_text(encoding="utf-8"))
+    saved_cookies = {c["name"]: c["value"] for c in saved_data.get("cookies", [])}
+    assert saved_cookies.get("li_at") == "valid_secret_123"
+

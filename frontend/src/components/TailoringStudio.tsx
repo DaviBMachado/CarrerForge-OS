@@ -196,6 +196,7 @@ export function TailoringStudio({
   onNotify,
 }: TailoringStudioProps) {
   const jobs = useAppStore((s) => s.jobs);
+  const setJobs = useAppStore((s) => s.setJobs);
   const profile = useAppStore((s) => s.profile);
   const fetchJobs = useAppStore((s) => s.fetchJobs);
   const fetchProfile = useAppStore((s) => s.fetchProfile);
@@ -232,6 +233,31 @@ export function TailoringStudio({
   const [exportingFormat, setExportingFormat] = useState<"pdf" | "docx" | null>(
     null
   );
+
+  const [isManualMode, setIsManualMode] = useState(false);
+  const [previousJob, setPreviousJob] = useState<JobPostingItem | null>(null);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualCompany, setManualCompany] = useState("");
+  const [manualLocation, setManualLocation] = useState("");
+  const [manualDescription, setManualDescription] = useState("");
+
+  const handleToggleManualMode = (enabled: boolean) => {
+    setIsManualMode(enabled);
+    if (enabled) {
+      setPreviousJob(selectedJob);
+      setRundown(null);
+      setQaHistory([]);
+      setQuestionInput("");
+      setAtsSpec(null);
+      setHumanSpec(null);
+      setAtsKeywords([]);
+      setMatchPercentage(0);
+    } else {
+      if (previousJob) {
+        onSelectJob(previousJob);
+      }
+    }
+  };
 
   // Load jobs and profile on mount
   useEffect(() => {
@@ -448,14 +474,46 @@ export function TailoringStudio({
   };
 
   const handleRunTailor = async (modeToRun?: ResumeMode) => {
-    if (!selectedJob) {
+    let jobToTailor = selectedJob;
+
+    if (isManualMode) {
+      const title = manualTitle.trim();
+      const comp = manualCompany.trim();
+      const desc = manualDescription.trim();
+      if (!title || !comp || !desc) {
+        onNotify("error", t("studio.manualValidation"));
+        return;
+      }
+      setTailoring(true);
+      try {
+        const created = await api.createManualJob({
+          title,
+          company: comp,
+          location: manualLocation.trim() || null,
+          raw_description: desc,
+        });
+        setJobs((prev) => [created, ...prev.filter((j) => j.id !== created.id)]);
+        onSelectJob(created);
+        setIsManualMode(false);
+        jobToTailor = created;
+      } catch (err) {
+        setTailoring(false);
+        onNotify(
+          "error",
+          err instanceof Error ? err.message : "Falha ao cadastrar vaga manual"
+        );
+        return;
+      }
+    }
+
+    if (!jobToTailor) {
       onNotify("error", "Select a job posting first to run AI tailoring.");
       return;
     }
     const targetMode = modeToRun || resumeMode;
     setTailoring(true);
     try {
-      const result = await api.tailorJob(selectedJob.id, targetMode);
+      const result = await api.tailorJob(jobToTailor.id, targetMode);
       setPersona(result.selected_persona);
       setLanguage(result.language);
       setAtsKeywords(result.ats_keywords);
@@ -491,7 +549,7 @@ export function TailoringStudio({
 
       // Refresh Gupy rundown with newly tailored summary
       api
-        .getGupyRundown(selectedJob.id)
+        .getGupyRundown(jobToTailor.id)
         .then((r) => {
           setRundown(r);
           if (r.screening_qa && r.screening_qa.length > 0) {
@@ -503,7 +561,7 @@ export function TailoringStudio({
       const modeLabel = targetMode === "human" ? "Human Curation (2-Page)" : "ATS Optimized";
       onNotify(
         "success",
-        `Tailored (${modeLabel}) for ${selectedJob.company} using "${result.selected_persona}" lens (${result.match_percentage}% ATS match).`
+        `Tailored (${modeLabel}) for ${jobToTailor.company} using "${result.selected_persona}" lens (${result.match_percentage}% ATS match).`
       );
     } catch (err) {
       onNotify(
@@ -709,7 +767,7 @@ export function TailoringStudio({
             type="button"
             className="btn btn-primary"
             onClick={() => void handleRunTailor()}
-            disabled={tailoring || !selectedJob}
+            disabled={tailoring || (!selectedJob && !isManualMode)}
           >
             {tailoring ? "Tailoring with AI..." : "Tailor with AI"}
           </button>
@@ -744,32 +802,108 @@ export function TailoringStudio({
             </span>
           </div>
 
-          <div className="field" style={{ flexShrink: 0 }}>
-            <label className="field-label" htmlFor="studio-job-select">
-              Target Job Posting
+          {/* Manual mode checkbox */}
+          <div style={{ marginBottom: "0.75rem", paddingBottom: "0.5rem", borderBottom: "1px solid var(--border-subtle)" }}>
+            <label className="checkbox-pill" style={{ display: "inline-flex", cursor: "pointer", userSelect: "none" }}>
+              <input
+                type="checkbox"
+                checked={isManualMode}
+                onChange={(e) => handleToggleManualMode(e.target.checked)}
+              />
+              <span style={{ fontWeight: 600 }}>{t("studio.manualMode")}</span>
             </label>
-            <select
-              id="studio-job-select"
-              className="select"
-              value={selectedJob?.id ?? ""}
-              onChange={(e) => {
-                const found = jobs.find((j) => j.id === Number(e.target.value));
-                if (found) onSelectJob(found);
-              }}
-            >
-              {jobs.length === 0 ? (
-                <option value="">No jobs discovered yet</option>
-              ) : (
-                jobs.map((j) => (
-                  <option key={j.id} value={j.id}>
-                    {j.title} — {j.company} ({j.platform})
-                  </option>
-                ))
-              )}
-            </select>
           </div>
 
-          {selectedJob ? (
+          {!isManualMode && (
+            <div className="field" style={{ flexShrink: 0 }}>
+              <label className="field-label" htmlFor="studio-job-select">
+                Target Job Posting
+              </label>
+              <select
+                id="studio-job-select"
+                className="select"
+                value={selectedJob?.id ?? ""}
+                onChange={(e) => {
+                  const found = jobs.find((j) => j.id === Number(e.target.value));
+                  if (found) onSelectJob(found);
+                }}
+              >
+                {jobs.length === 0 ? (
+                  <option value="">No jobs discovered yet</option>
+                ) : (
+                  jobs.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.title} — {j.company} ({j.platform === "manual" ? "[Manual]" : j.platform})
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+          )}
+
+          {isManualMode ? (
+            <div className="manual-job-form" style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "0.25rem", flex: 1 }}>
+              <div className="field">
+                <label className="field-label" htmlFor="manual-job-title">
+                  {t("studio.manualJobTitle")} *
+                </label>
+                <input
+                  id="manual-job-title"
+                  className="input"
+                  value={manualTitle}
+                  onChange={(e) => setManualTitle(e.target.value)}
+                  placeholder={t("studio.manualPlaceholderTitle")}
+                />
+              </div>
+
+              <div className="field">
+                <label className="field-label" htmlFor="manual-job-company">
+                  {t("studio.manualCompany")} *
+                </label>
+                <input
+                  id="manual-job-company"
+                  className="input"
+                  value={manualCompany}
+                  onChange={(e) => setManualCompany(e.target.value)}
+                  placeholder={t("studio.manualPlaceholderCompany")}
+                />
+              </div>
+
+              <div className="field">
+                <label className="field-label" htmlFor="manual-job-location">
+                  {t("studio.manualLocation")}
+                </label>
+                <input
+                  id="manual-job-location"
+                  className="input"
+                  value={manualLocation}
+                  onChange={(e) => setManualLocation(e.target.value)}
+                  placeholder={t("studio.manualPlaceholderLocation")}
+                />
+              </div>
+
+              <div className="field" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                <label className="field-label" htmlFor="manual-job-description">
+                  {t("studio.manualDescription")} *
+                </label>
+                <textarea
+                  id="manual-job-description"
+                  className="input"
+                  rows={8}
+                  style={{
+                    resize: "vertical",
+                    fontFamily: "var(--font-mono, monospace)",
+                    fontSize: "0.85rem",
+                    lineHeight: "1.4",
+                    flex: 1,
+                  }}
+                  value={manualDescription}
+                  onChange={(e) => setManualDescription(e.target.value)}
+                  placeholder={t("studio.manualPlaceholderDescription")}
+                />
+              </div>
+            </div>
+          ) : selectedJob ? (
             (() => {
               const jobText =
                 selectedJob.cleaned_text || selectedJob.raw_description || "";
@@ -1041,7 +1175,7 @@ export function TailoringStudio({
                     type="button"
                     className="btn btn-sm btn-primary"
                     onClick={() => void handleRunTailor("human")}
-                    disabled={tailoring || !selectedJob}
+                    disabled={tailoring || (!selectedJob && !isManualMode)}
                   >
                     {tailoring ? "Gerando..." : "Gerar Versao Humana com Julgamento da IA"}
                   </button>

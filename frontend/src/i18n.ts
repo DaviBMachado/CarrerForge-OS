@@ -55,6 +55,16 @@ export const translations = {
     "studio.noJobDescription": "No job description available.",
     "studio.noResumeContent": "No resume content to display in preview.",
     "studio.generatingPreview": "Generating PDF preview...",
+    "studio.manualMode": "Manual job entry",
+    "studio.manualJobTitle": "Job Title",
+    "studio.manualCompany": "Company",
+    "studio.manualLocation": "Location / Modality",
+    "studio.manualDescription": "Full Job Description / Requirements",
+    "studio.manualValidation": "Please fill in title, company, and description before tailoring.",
+    "studio.manualPlaceholderTitle": "e.g. Senior Backend Engineer",
+    "studio.manualPlaceholderCompany": "e.g. Acme Fintech",
+    "studio.manualPlaceholderLocation": "e.g. Remote, São Paulo, Hybrid",
+    "studio.manualPlaceholderDescription": "Paste full job requirements and description here...",
 
     // Common & Status
     "common.save": "Save",
@@ -134,6 +144,16 @@ export const translations = {
     "studio.noJobDescription": "Nenhuma descrição disponível para esta vaga.",
     "studio.noResumeContent": "Nenhum conteúdo de currículo para exibir na prévia.",
     "studio.generatingPreview": "Gerando pré-visualização em PDF...",
+    "studio.manualMode": "Preenchimento manual da vaga",
+    "studio.manualJobTitle": "Cargo / Título da Vaga",
+    "studio.manualCompany": "Empresa",
+    "studio.manualLocation": "Localização / Modalidade",
+    "studio.manualDescription": "Descrição Completa da Vaga / Requisitos",
+    "studio.manualValidation": "Preencha o cargo, empresa e descrição da vaga antes de gerar o tailoring.",
+    "studio.manualPlaceholderTitle": "ex: Engenheiro Backend Sênior",
+    "studio.manualPlaceholderCompany": "ex: Acme Fintech",
+    "studio.manualPlaceholderLocation": "ex: Remoto, São Paulo, Híbrido",
+    "studio.manualPlaceholderDescription": "Cole a descrição completa e requisitos da vaga aqui...",
 
     // Common & Status
     "common.save": "Salvar",

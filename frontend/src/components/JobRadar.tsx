@@ -31,6 +31,9 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
     useState<ScraperSessionStatus | null>(null);
   const [activeWaitingPlatform, setActiveWaitingPlatform] = useState<string | null>(null);
   const [sessionLoadingPlatform, setSessionLoadingPlatform] = useState<string | null>(null);
+  const [extractingUrl, setExtractingUrl] = useState(false);
+
+  const isUrl = /^https?:\/\//i.test(query.trim());
 
   const jobs = useAppStore((s) => s.jobs);
   const setJobs = useAppStore((s) => s.setJobs);
@@ -243,9 +246,37 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
   const handleRunScraper = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) {
-      onNotify("error", "Enter search keywords before running the scraper.");
+      onNotify("error", "Enter search keywords or job URL before running.");
       return;
     }
+    if (isUrl) {
+      setExtractingUrl(true);
+      try {
+        const extractedJob = await api.extractJobFromUrl(query.trim());
+        setJobs((prev) => [
+          extractedJob,
+          ...prev.filter((j) => j.id !== extractedJob.id),
+        ]);
+        if (onTailorResume) {
+          onTailorResume(extractedJob);
+        }
+        onNotify(
+          "success",
+          `Vaga "${extractedJob.title}" extraída e adicionada ao catálogo com sucesso!`
+        );
+      } catch (err) {
+        onNotify(
+          "error",
+          err instanceof Error && err.message
+            ? err.message
+            : "Não foi possível extrair a vaga do link. Você pode cadastrá-la manualmente no Estúdio de Personalização."
+        );
+      } finally {
+        setExtractingUrl(false);
+      }
+      return;
+    }
+
     setRunning(true);
     setDrawerOpen(true);
     setProgress(0);
@@ -438,18 +469,25 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
         <form onSubmit={handleRunScraper} className="radar-toolbar">
           <div className="field" style={{ flex: "2 1 220px" }}>
             <label className="field-label" htmlFor="radar-keywords">
-              Keywords
+              {isUrl ? "Job URL" : "Keywords"}
             </label>
             <input
               id="radar-keywords"
               className="input"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="e.g. Python, FastAPI, Senior Backend"
+              placeholder={isUrl ? "https://..." : "e.g. Python, FastAPI, Senior Backend"}
             />
           </div>
 
-          <div className="field" style={{ flex: "1.5 1 180px" }}>
+          <div
+            className="field"
+            style={{
+              flex: "1.5 1 180px",
+              opacity: isUrl ? 0.45 : 1,
+              pointerEvents: isUrl ? "none" : "auto",
+            }}
+          >
             <label className="field-label" htmlFor="radar-location">
               Location
             </label>
@@ -457,12 +495,20 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
               id="radar-location"
               className="input"
               value={location}
+              disabled={isUrl}
               onChange={(e) => setLocation(e.target.value)}
               placeholder="e.g. São Paulo, Brazil, Remote"
             />
           </div>
 
-          <div className="field" style={{ flex: "0 0 auto" }}>
+          <div
+            className="field"
+            style={{
+              flex: "0 0 auto",
+              opacity: isUrl ? 0.45 : 1,
+              pointerEvents: isUrl ? "none" : "auto",
+            }}
+          >
             <span className="field-label">Platforms</span>
             <div className="platform-selector" role="group" aria-label="Target platforms">
               {PLATFORMS.map((p) => {
@@ -473,6 +519,7 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
                     type="button"
                     className={`platform-chip ${active ? "active" : ""}`}
                     aria-pressed={active}
+                    disabled={isUrl}
                     onClick={() => togglePlatform(p.id)}
                   >
                     {p.label}
@@ -484,12 +531,18 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
 
           <div
             className="field"
-            style={{ flex: "0 0 auto", justifyContent: "flex-end" }}
+            style={{
+              flex: "0 0 auto",
+              justifyContent: "flex-end",
+              opacity: isUrl ? 0.45 : 1,
+              pointerEvents: isUrl ? "none" : "auto",
+            }}
           >
             <label className="checkbox-pill">
               <input
                 type="checkbox"
                 checked={remoteOnly}
+                disabled={isUrl}
                 onChange={(e) => setRemoteOnly(e.target.checked)}
               />
               <span>Remote only</span>
@@ -526,6 +579,14 @@ export function JobRadar({ onNotify, onTailorResume }: JobRadarProps) {
                 onClick={handleStopScraper}
               >
                 Stop Scraper
+              </button>
+            ) : isUrl ? (
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={extractingUrl}
+              >
+                {extractingUrl ? "Extraindo..." : "Extrair Vaga do Link"}
               </button>
             ) : (
               <button type="submit" className="btn btn-primary">
