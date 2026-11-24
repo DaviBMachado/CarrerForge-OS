@@ -1,8 +1,9 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlmodel import Session, col, select
 
+from backend.app.auth import CurrentUser, ensure_default_user
 from backend.app.db import get_db
 from backend.app.models import Experience, MasterProfile, User
 from backend.app.schemas.profile import (
@@ -10,37 +11,36 @@ from backend.app.schemas.profile import (
     ExperienceCreate,
     ExperienceRead,
     ExperienceUpdate,
-    LegacyImportResponse,
     ProfileRead,
     ProfileUpdate,
 )
-from backend.app.services.legacy_importer import import_legacy_data
+from backend.app.services.document_parser import extract_text_from_file
+from backend.app.services.llm_orchestrator import LLMProviderError
+from backend.app.services.profile_ingestion import parse_resume_text, persist_profile_ingestion
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
 DBSession = Annotated[Session, Depends(get_db)]
 
 
-def get_or_create_default_profile(session: Session) -> MasterProfile:
-    user = session.exec(select(User).where(User.email == "default@careerforge.local")).first()
-    if not user:
-        user = User(email="default@careerforge.local")
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-
+def get_or_create_user_profile(session: Session, user: User) -> MasterProfile:
     assert user.id is not None
     profile = session.exec(select(MasterProfile).where(MasterProfile.user_id == user.id)).first()
     if not profile:
         profile = MasterProfile(
             user_id=user.id,
-            full_name="Davi Bernardes Machado",
-            headline="Engenheiro de Software Backend",
+            full_name="",
+            headline=None,
         )
         session.add(profile)
         session.commit()
         session.refresh(profile)
     return profile
+
+
+def get_or_create_default_profile(session: Session) -> MasterProfile:
+    user = ensure_default_user(session)
+    return get_or_create_user_profile(session, user)
 
 
 def serialize_experience(exp: Experience) -> ExperienceRead:
@@ -54,6 +54,8 @@ def serialize_experience(exp: Experience) -> ExperienceRead:
         start_date=exp.start_date,
         end_date=exp.end_date,
         is_current=exp.is_current,
+        is_academic=exp.is_academic,
+        is_contract=getattr(exp, "is_contract", False),
         bullets_json=bullets,
     )
 
@@ -77,14 +79,16 @@ def serialize_profile(profile: MasterProfile, session: Session) -> ProfileRead:
 
 
 @router.get("", response_model=ProfileRead)
-def get_profile(session: DBSession) -> ProfileRead:
-    profile = get_or_create_default_profile(session)
+def get_profile(session: DBSession, current_user: CurrentUser) -> ProfileRead:
+    profile = get_or_create_user_profile(session, current_user)
     return serialize_profile(profile, session)
 
 
 @router.put("", response_model=ProfileRead)
-def update_profile(data: ProfileUpdate, session: DBSession) -> ProfileRead:
-    profile = get_or_create_default_profile(session)
+def update_profile(
+    data: ProfileUpdate, session: DBSession, current_user: CurrentUser
+) -> ProfileRead:
+    profile = get_or_create_user_profile(session, current_user)
 
     if data.full_name is not None:
         profile.full_name = data.full_name
@@ -106,9 +110,13 @@ def update_profile(data: ProfileUpdate, session: DBSession) -> ProfileRead:
 
 
 @router.post("/experiences", response_model=ExperienceRead, status_code=status.HTTP_201_CREATED)
-def create_experience(data: ExperienceCreate, session: DBSession) -> ExperienceRead:
-    profile = get_or_create_default_profile(session)
+def create_experience(
+    data: ExperienceCreate, session: DBSession, current_user: CurrentUser
+) -> ExperienceRead:
+    profile = get_or_create_user_profile(session, current_user)
+    assert current_user.id is not None
     exp = Experience(
+        user_id=current_user.id,
         profile_id=profile.id,  # type: ignore[arg-type]
         company=data.company,
         role=data.role,
@@ -116,6 +124,8 @@ def create_experience(data: ExperienceCreate, session: DBSession) -> ExperienceR
         start_date=data.start_date,
         end_date=data.end_date,
         is_current=data.is_current,
+        is_academic=data.is_academic,
+        is_contract=data.is_contract,
         bullets_json=[b.model_dump() for b in data.bullets_json],
     )
     session.add(exp)
@@ -126,15 +136,13 @@ def create_experience(data: ExperienceCreate, session: DBSession) -> ExperienceR
 
 @router.put("/experiences/{experience_id}", response_model=ExperienceRead)
 def update_experience(
-    experience_id: int, data: ExperienceUpdate, session: DBSession
+    experience_id: int,
+    data: ExperienceUpdate,
+    session: DBSession,
+    current_user: CurrentUser,
 ) -> ExperienceRead:
-    profile = get_or_create_default_profile(session)
-    exp = session.exec(
-        select(Experience).where(
-            Experience.id == experience_id, Experience.profile_id == profile.id
-        )
-    ).first()
-    if not exp:
+    exp = session.get(Experience, experience_id)
+    if not exp or exp.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experience not found")
 
     if data.company is not None:
@@ -149,6 +157,10 @@ def update_experience(
         exp.end_date = data.end_date
     if data.is_current is not None:
         exp.is_current = data.is_current
+    if data.is_academic is not None:
+        exp.is_academic = data.is_academic
+    if data.is_contract is not None:
+        exp.is_contract = data.is_contract
     if data.bullets_json is not None:
         exp.bullets_json = [b.model_dump() for b in data.bullets_json]
 
@@ -159,14 +171,9 @@ def update_experience(
 
 
 @router.delete("/experiences/{experience_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_experience(experience_id: int, session: DBSession) -> None:
-    profile = get_or_create_default_profile(session)
-    exp = session.exec(
-        select(Experience).where(
-            Experience.id == experience_id, Experience.profile_id == profile.id
-        )
-    ).first()
-    if not exp:
+def delete_experience(experience_id: int, session: DBSession, current_user: CurrentUser) -> None:
+    exp = session.get(Experience, experience_id)
+    if not exp or exp.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experience not found")
 
     session.delete(exp)
@@ -174,8 +181,49 @@ def delete_experience(experience_id: int, session: DBSession) -> None:
     return None
 
 
-@router.post("/import-legacy", response_model=LegacyImportResponse)
-def import_legacy_profile(session: DBSession) -> LegacyImportResponse:
-    profile = get_or_create_default_profile(session)
-    result = import_legacy_data(session, profile)
-    return LegacyImportResponse(**result)
+@router.post("/upload", response_model=ProfileRead)
+async def upload_resume(
+    session: DBSession,
+    file: Annotated[UploadFile, File()],
+    current_user: CurrentUser,
+) -> ProfileRead:
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="File name is required."
+        )
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="File size exceeds maximum limit of 10MB.",
+        )
+
+    try:
+        extracted_text = extract_text_from_file(file.filename, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    try:
+        parsed_data = parse_resume_text(extracted_text, session)
+    except LLMProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM ingestion failed: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process resume text: {exc}",
+        ) from exc
+
+    profile = get_or_create_user_profile(session, current_user)
+    try:
+        persist_profile_ingestion(session, profile, parsed_data)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database persistence failed: {exc}",
+        ) from exc
+
+    return serialize_profile(profile, session)

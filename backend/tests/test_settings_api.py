@@ -114,3 +114,48 @@ def test_clear_secret_with_empty_string(client: TestClient):
 def test_invalid_provider_rejected(client: TestClient):
     response = client.post("/api/settings", json={"active_provider": "unknown_ai"})
     assert response.status_code == 422
+
+
+def test_openrouter_call_fallback_on_400_response_format(monkeypatch):
+    from typing import cast
+
+    import httpx
+    from sqlmodel import Session
+
+    from backend.app.services.llm_orchestrator import LLMOrchestrator
+
+    call_count = 0
+
+    def mock_post(url, headers=None, json=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {"message": "Provider does not support response_format: json_object"}
+                },
+                request=httpx.Request("POST", url),
+            )
+        assert isinstance(json, dict)
+        assert "response_format" not in json
+        assert "json" in json["messages"][0]["content"].lower()
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"result": "ok"}'}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    client = httpx.Client()
+    monkeypatch.setattr(client, "post", mock_post)
+    orchestrator = LLMOrchestrator(session=cast(Session, None))
+    res = orchestrator._call_openrouter(
+        client=client,
+        api_key="test-key",
+        prompt="hello",
+        system_prompt="system",
+        json_mode=True,
+        temperature=0.2,
+    )
+    assert res == '{"result": "ok"}'
+    assert call_count == 2

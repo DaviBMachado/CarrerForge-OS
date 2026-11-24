@@ -195,3 +195,28 @@ def test_orchestrator_missing_key_and_error_redaction(session: Session):
         failing_orchestrator.generate("Trigger failure")
 
     assert secret_key not in str(exc_info.value)
+
+
+def test_orchestrator_tenant_isolated_credentials(session: Session):
+    update_settings(
+        session,
+        SettingsUpdate(active_provider="gemini", gemini_api_key="GeminiKeyTenant1"),
+        user_id=1,
+    )
+    update_settings(
+        session,
+        SettingsUpdate(active_provider="openai", openai_api_key="sk-proj-OpenAIKeyTenant2"),
+        user_id=2,
+    )
+
+    orch_1 = LLMOrchestrator(session, user_id=1)
+    orch_2 = LLMOrchestrator(session, user_id=2)
+
+    assert orch_1.get_active_provider() == "gemini"
+    assert orch_1._require_key("gemini_api_key", "gemini") == "GeminiKeyTenant1"
+
+    assert orch_2.get_active_provider() == "openai"
+    assert orch_2._require_key("openai_api_key", "openai") == "sk-proj-OpenAIKeyTenant2"
+
+    with pytest.raises(LLMConfigurationError, match="gemini"):
+        orch_2._require_key("gemini_api_key", "gemini")

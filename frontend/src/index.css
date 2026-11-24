@@ -798,9 +798,16 @@ textarea::placeholder {
 }
 
 .studio-pane {
-  min-height: 720px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: calc(100vh - 160px);
   max-height: calc(100vh - 160px);
-  overflow-y: auto;
+  overflow-y: hidden;
+}
+
+.studio-pane > .panel-header {
+  flex-shrink: 0;
 }
 
 .studio-job-summary {
@@ -811,6 +818,7 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  flex-shrink: 0;
 }
 
 .studio-job-scroll {
@@ -822,7 +830,9 @@ textarea::placeholder {
   line-height: 1.55;
   color: var(--ink-secondary);
   white-space: pre-wrap;
-  max-height: 410px;
+  word-break: break-word;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -832,12 +842,16 @@ textarea::placeholder {
   justify-content: space-between;
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
 }
 
 .studio-tab-body {
   display: flex;
   flex-direction: column;
   gap: 0.875rem;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .studio-sections-scroll {
@@ -862,6 +876,16 @@ textarea::placeholder {
 
 .studio-pdf-viewport {
   height: 500px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

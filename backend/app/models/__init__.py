@@ -2,6 +2,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import Index
 from sqlalchemy.orm import validates
 from sqlmodel import JSON, Field, Relationship, SQLModel
 
@@ -34,10 +35,19 @@ class User(SQLModel, table=True):
         back_populates="user",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
+    experiences: list["Experience"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+    system_settings: list["SystemSetting"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
 
 class MasterProfile(SQLModel, table=True):
     __tablename__: Any = "master_profiles"
+    __table_args__ = (Index("ix_master_profiles_user_id_id", "user_id", "id"),)
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", ondelete="CASCADE", index=True)
@@ -57,8 +67,10 @@ class MasterProfile(SQLModel, table=True):
 
 class Experience(SQLModel, table=True):
     __tablename__: Any = "experiences"
+    __table_args__ = (Index("ix_experiences_user_id_id", "user_id", "id"),)
 
     id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(default=1, foreign_key="users.id", ondelete="CASCADE", index=True)
     profile_id: int = Field(foreign_key="master_profiles.id", ondelete="CASCADE", index=True)
     company: str = Field(index=True)
     role: str
@@ -66,13 +78,17 @@ class Experience(SQLModel, table=True):
     start_date: str | None = None
     end_date: str | None = None
     is_current: bool = Field(default=False)
+    is_academic: bool = Field(default=False)
+    is_contract: bool = Field(default=False)
     bullets_json: list[dict[str, Any]] | None = Field(default=None, sa_type=JSON)
 
+    user: User | None = Relationship(back_populates="experiences")
     profile: MasterProfile | None = Relationship(back_populates="experiences")
 
 
 class JobPosting(SQLModel, table=True):
     __tablename__: Any = "job_postings"
+    __table_args__ = (Index("ix_job_postings_user_id_id", "user_id", "id"),)
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", ondelete="CASCADE", index=True)
@@ -87,6 +103,7 @@ class JobPosting(SQLModel, table=True):
     cleaned_text: str | None = None
     language: str = Field(default="en")
     status: str = Field(default="discovered", index=True)
+    match_percentage: int | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     user: User | None = Relationship(back_populates="job_postings")
@@ -116,9 +133,14 @@ class TailoredArtifact(SQLModel, table=True):
 class SystemSetting(SQLModel, table=True):
     __tablename__: Any = "system_settings"
 
+    user_id: int = Field(
+        default=1, foreign_key="users.id", ondelete="CASCADE", primary_key=True, index=True
+    )
     key: str = Field(primary_key=True, index=True)
     value_encrypted_or_plain: str
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    user: User | None = Relationship(back_populates="system_settings")
 
 
 __all__ = [

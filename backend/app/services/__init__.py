@@ -1,10 +1,11 @@
-from backend.app.services.legacy_importer import import_legacy_data
 from backend.app.services.tailoring_engine import (
     FactualGuardrailError,
     GupyRundown,
     SolveQuestionRequest,
     SolveQuestionResponse,
     TailoringResult,
+    build_ats_system_prompt,
+    build_human_curation_system_prompt,
     build_tailoring_system_prompt,
     extract_ats_keywords,
     generate_gupy_rundown,
@@ -14,12 +15,13 @@ from backend.app.services.tailoring_engine import (
 )
 
 __all__ = [
-    "import_legacy_data",
     "FactualGuardrailError",
     "GupyRundown",
     "SolveQuestionRequest",
     "SolveQuestionResponse",
     "TailoringResult",
+    "build_ats_system_prompt",
+    "build_human_curation_system_prompt",
     "build_tailoring_system_prompt",
     "extract_ats_keywords",
     "generate_gupy_rundown",

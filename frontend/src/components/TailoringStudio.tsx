@@ -10,7 +10,9 @@ import {
   ResumeSpecPayload,
   SolveQuestionResponse,
 } from "../api";
-import { base64ToPdfBlob } from "./ResumePreviewer";
+import { base64ToPdfBlob } from "./GeneralResumeBuilder";
+import { useAppStore } from "../store";
+import { useTranslation } from "../i18n";
 
 interface TailoringStudioProps {
   selectedJob: JobPostingItem | null;
@@ -50,51 +52,18 @@ function profileToInitialSpec(
   profile: MasterProfile | null,
   job: JobPostingItem | null
 ): ResumeSpecPayload {
-  if (!profile) {
+  if (
+    !profile ||
+    (!profile.full_name && (!profile.experiences || profile.experiences.length === 0))
+  ) {
     return {
-      name: "Davi Bernardes Machado",
-      title: "Davi Bernardes Machado - Senior Backend Python Engineer",
-      contact: "davi@careerforge.local | São Paulo, SP | linkedin.com/in/davibernardes",
+      name: "",
+      title: "",
+      contact: "",
       filename_title: job
-        ? `Resume_Davi_Bernardes_${job.company.replace(/\s+/g, "_")}`
-        : "Resume_Davi_Bernardes",
-      sections: [
-        {
-          title: "Professional Summary",
-          blocks: [
-            {
-              type: "paragraph",
-              text: "Backend Python Engineer experienced in FastAPI, distributed APIs, relational databases, and deterministic ATS document pipelines.",
-            },
-          ],
-        },
-        {
-          title: "Technical Skills",
-          blocks: [
-            {
-              type: "skillline",
-              text: "**Backend & Cloud:** Python, FastAPI, PostgreSQL, AWS Lambda, Docker, REST",
-            },
-          ],
-        },
-        {
-          title: "Professional Experience",
-          blocks: [
-            {
-              type: "subheading",
-              text: "Senior Software Engineer | CareerForge Systems (2023 – Present)",
-            },
-            {
-              type: "bullet",
-              text: "Architected high-throughput Python and FastAPI services with strict factual guardrails and sub-second compilation latency.",
-            },
-            {
-              type: "bullet",
-              text: "Automated cloud data workflows and standardized REST API contracts across engineering teams.",
-            },
-          ],
-        },
-      ],
+        ? `Resume_${job.company.replace(/\s+/g, "_")}`
+        : "Resume",
+      sections: [],
     };
   }
 
@@ -103,24 +72,27 @@ function profileToInitialSpec(
     .filter(Boolean)
     .join(" | ");
 
-  const sections: ResumeSection[] = [
-    {
+  const sections: ResumeSection[] = [];
+  if (profile.summary_base || profile.headline) {
+    sections.push({
       title: "Professional Summary",
       blocks: [
         {
           type: "paragraph",
           text:
             profile.summary_base ||
-            `${profile.full_name} — ${profile.headline || "Software Engineer"}`,
+            (profile.headline
+              ? `${profile.full_name} — ${profile.headline}`
+              : profile.full_name),
         },
       ],
-    },
-  ];
+    });
+  }
 
   if (profile.skills_json && Object.keys(profile.skills_json).length > 0) {
     const skillParts = Object.entries(profile.skills_json)
       .filter(([, items]) => Array.isArray(items) && items.length > 0)
-      .map(([cat, items]) => `**${cat}:** ${items.join(", ")}`);
+      .map(([cat, items]) => `**${cat}:** ${(items as string[]).join(", ")}`);
     if (skillParts.length > 0) {
       sections.push({
         title: "Technical Skills",
@@ -130,31 +102,60 @@ function profileToInitialSpec(
   }
 
   if (profile.experiences && profile.experiences.length > 0) {
-    const expBlocks: ResumeBlock[] = [];
-    for (const exp of profile.experiences) {
-      const period = [exp.start_date, exp.is_current ? "Present" : exp.end_date]
-        .filter(Boolean)
-        .join(" - ");
-      expBlocks.push({
-        type: "subheading",
-        text: `${exp.role} | ${exp.company}${period ? ` (${period})` : ""}`,
-      });
-      for (const b of exp.bullets_json || []) {
-        if (b.text.trim()) {
-          expBlocks.push({ type: "bullet", text: b.text.trim() });
+    const profExps = profile.experiences.filter((e) => !e.is_academic);
+    const acadExps = profile.experiences.filter((e) => e.is_academic);
+
+    if (profExps.length > 0) {
+      const expBlocks: ResumeBlock[] = [];
+      for (const exp of profExps) {
+        const period = [exp.start_date, exp.is_current ? "Present" : exp.end_date]
+          .filter(Boolean)
+          .join(" - ");
+        expBlocks.push({
+          type: "subheading",
+          text: `${exp.role} | ${exp.company}${period ? ` (${period})` : ""}`,
+        });
+        for (const b of exp.bullets_json || []) {
+          if (b.text.trim()) {
+            expBlocks.push({ type: "bullet", text: b.text.trim() });
+          }
         }
       }
+      sections.push({ title: "Professional Experience", blocks: expBlocks });
     }
-    sections.push({ title: "Professional Experience", blocks: expBlocks });
+
+    if (acadExps.length > 0) {
+      const acadBlocks: ResumeBlock[] = [];
+      for (const exp of acadExps) {
+        const period = [exp.start_date, exp.is_current ? "Present" : exp.end_date]
+          .filter(Boolean)
+          .join(" - ");
+        acadBlocks.push({
+          type: "subheading",
+          text: `${exp.role} | ${exp.company}${period ? ` (${period})` : ""}`,
+        });
+        for (const b of exp.bullets_json || []) {
+          if (b.text.trim()) {
+            acadBlocks.push({ type: "bullet", text: b.text.trim() });
+          }
+        }
+      }
+      sections.push({ title: "Academic & Research Projects", blocks: acadBlocks });
+    }
   }
 
+  const name = profile.full_name || "";
+  const title = profile.headline
+    ? (name ? `${name} - ${profile.headline}` : profile.headline)
+    : name;
+
   return {
-    name: profile.full_name || "Candidate",
-    title: `${profile.full_name || "Candidate"} - ${profile.headline || "Software Engineer"}`,
+    name,
+    title,
     contact: contactLine,
     filename_title: job
-      ? `Resume_${(profile.full_name || "Candidate").replace(/\s+/g, "_")}_${job.company.replace(/\s+/g, "_")}`
-      : "Resume",
+      ? `Resume_${name ? `${name.replace(/\s+/g, "_")}_` : ""}${job.company.replace(/\s+/g, "_")}`
+      : name ? `Resume_${name.replace(/\s+/g, "_")}` : "Resume",
     sections,
   };
 }
@@ -178,10 +179,10 @@ function deriveLocalKeywords(
   const lowerJob = (jobText || "").toLowerCase();
   const jobMatches = KNOWN_KEYWORDS.filter((kw) => lowerJob.includes(kw));
   if (jobMatches.length === 0) {
-    return { keywords: ["python", "fastapi", "postgresql", "aws"], matchPct: 100 };
+    return { keywords: [], matchPct: 0 };
   }
   if (!profile) {
-    return { keywords: jobMatches, matchPct: 85 };
+    return { keywords: jobMatches, matchPct: 0 };
   }
   const profileBlob = JSON.stringify(profile).toLowerCase();
   const grounded = jobMatches.filter((kw) => profileBlob.includes(kw));
@@ -194,21 +195,28 @@ export function TailoringStudio({
   onSelectJob,
   onNotify,
 }: TailoringStudioProps) {
-  const [jobs, setJobs] = useState<JobPostingItem[]>([]);
-  const [profile, setProfile] = useState<MasterProfile | null>(null);
+  const jobs = useAppStore((s) => s.jobs);
+  const setJobs = useAppStore((s) => s.setJobs);
+  const profile = useAppStore((s) => s.profile);
+  const fetchJobs = useAppStore((s) => s.fetchJobs);
+  const fetchProfile = useAppStore((s) => s.fetchProfile);
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<StudioTab>("resume");
 
-  const [persona, setPersona] = useState<string>("Backend Python Engineer");
+  const [persona, setPersona] = useState<string>(() => profile?.headline || "");
   const [language, setLanguage] = useState<string>("en");
   const [atsKeywords, setAtsKeywords] = useState<string[]>([]);
   const [matchPercentage, setMatchPercentage] = useState<number>(0);
 
+  type ResumeMode = "ats" | "human";
+  const [resumeMode, setResumeMode] = useState<ResumeMode>("ats");
+  const [atsSpec, setAtsSpec] = useState<ResumeSpecPayload | null>(null);
+  const [humanSpec, setHumanSpec] = useState<ResumeSpecPayload | null>(null);
+
   const [resumeSpec, setResumeSpec] = useState<ResumeSpecPayload>(() =>
-    profileToInitialSpec(null, selectedJob)
+    profileToInitialSpec(profile, selectedJob)
   );
-  const [coverLetter, setCoverLetter] = useState<string>(
-    "Dear Hiring Team,\n\nI am writing to express my strong interest in this position. My background in Python, FastAPI, and cloud architecture aligns directly with your technical requirements.\n\nIn my recent engineering roles, I built high-reliability backend services and automated data workflows with measurable latency and throughput improvements.\n\nThank you for your time and consideration. I look forward to discussing how my experience can contribute to your engineering organization."
-  );
+  const [coverLetter, setCoverLetter] = useState<string>("");
 
   const [rundown, setRundown] = useState<GupyRundown | null>(null);
   const [questionInput, setQuestionInput] = useState<string>("");
@@ -226,27 +234,89 @@ export function TailoringStudio({
     null
   );
 
+  const [isManualMode, setIsManualMode] = useState(false);
+  const [previousJob, setPreviousJob] = useState<JobPostingItem | null>(null);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualCompany, setManualCompany] = useState("");
+  const [manualLocation, setManualLocation] = useState("");
+  const [manualDescription, setManualDescription] = useState("");
+
+  const handleToggleManualMode = (enabled: boolean) => {
+    setIsManualMode(enabled);
+    if (enabled) {
+      setPreviousJob(selectedJob);
+      setRundown(null);
+      setQaHistory([]);
+      setQuestionInput("");
+      setAtsSpec(null);
+      setHumanSpec(null);
+      setAtsKeywords([]);
+      setMatchPercentage(0);
+    } else {
+      if (previousJob) {
+        onSelectJob(previousJob);
+      }
+    }
+  };
+
   // Load jobs and profile on mount
   useEffect(() => {
     Promise.all([
-      api.getScrapedJobs().catch(() => [] as JobPostingItem[]),
-      api.getProfile().catch(() => null),
+      fetchJobs().catch(() => [] as JobPostingItem[]),
+      fetchProfile().catch(() => null),
     ]).then(([loadedJobs, loadedProfile]) => {
-      setJobs(loadedJobs);
-      setProfile(loadedProfile);
       const initialJob = selectedJob || loadedJobs[0] || null;
       if (initialJob && !selectedJob) {
         onSelectJob(initialJob);
       }
-      if (loadedProfile) {
-        setResumeSpec(profileToInitialSpec(loadedProfile, initialJob));
+      if (
+        loadedProfile &&
+        (loadedProfile.full_name ||
+          (loadedProfile.experiences && loadedProfile.experiences.length > 0))
+      ) {
+        setResumeSpec((prev) => {
+          const isClean =
+            !prev.name && (!prev.sections || prev.sections.length === 0);
+          return isClean
+            ? profileToInitialSpec(loadedProfile, initialJob)
+            : prev;
+        });
+        setPersona((prev) => prev || loadedProfile.headline || "");
       }
     });
   }, []);
 
-  // Sync job-specific rundown and baseline keywords when selectedJob changes
+  // Synchronize clean resume spec if profile changes in store
   useEffect(() => {
-    if (!selectedJob) return;
+    if (
+      profile &&
+      (profile.full_name ||
+        (profile.experiences && profile.experiences.length > 0))
+    ) {
+      setResumeSpec((prev) => {
+        const isClean =
+          !prev.name && (!prev.sections || prev.sections.length === 0);
+        return isClean ? profileToInitialSpec(profile, selectedJob) : prev;
+      });
+      setPersona((prev) => prev || profile.headline || "");
+    }
+  }, [profile, selectedJob]);
+
+  // Sync job-specific rundown, existing tailored artifact, and baseline keywords when selectedJob changes
+  useEffect(() => {
+    if (!selectedJob) {
+      setRundown(null);
+      setQaHistory([]);
+      setQuestionInput("");
+      setAtsSpec(null);
+      setHumanSpec(null);
+      return;
+    }
+    setRundown(null);
+    setQaHistory([]);
+    setQuestionInput("");
+    setAtsSpec(null);
+    setHumanSpec(null);
     const jobText = selectedJob.cleaned_text || selectedJob.raw_description || "";
     const local = deriveLocalKeywords(jobText, profile);
     setAtsKeywords(local.keywords);
@@ -254,14 +324,59 @@ export function TailoringStudio({
     setLanguage(selectedJob.language || "en");
 
     api
+      .getTailoredJob(selectedJob.id)
+      .then((tailored) => {
+        setPersona(tailored.selected_persona);
+        setLanguage(tailored.language);
+        setAtsKeywords(tailored.ats_keywords);
+        setMatchPercentage(tailored.match_percentage);
+
+        const rawAts = tailored.resume_spec_ats || tailored.resume_spec || null;
+        const rawHuman = tailored.resume_spec_human || null;
+        const parsedAts = rawAts
+          ? { ...rawAts, sections: normalizeSections(rawAts.sections || []) }
+          : null;
+        const parsedHuman = rawHuman
+          ? { ...rawHuman, sections: normalizeSections(rawHuman.sections || []) }
+          : null;
+
+        setAtsSpec(parsedAts);
+        setHumanSpec(parsedHuman);
+
+        if (resumeMode === "human" && parsedHuman) {
+          setResumeSpec(parsedHuman);
+        } else if (parsedAts) {
+          setResumeSpec(parsedAts);
+        }
+
+        setCoverLetter(tailored.cover_letter_text);
+      })
+      .catch(() => {
+        // Not tailored yet: fallback to initial spec from master profile if empty
+        if (profile) {
+          setResumeSpec((prev) => {
+            const isClean =
+              !prev.name && (!prev.sections || prev.sections.length === 0);
+            return isClean ? profileToInitialSpec(profile, selectedJob) : prev;
+          });
+        }
+      });
+
+    api
       .getGupyRundown(selectedJob.id)
       .then((data) => {
         setRundown(data);
+        if (data.screening_qa && data.screening_qa.length > 0) {
+          setQaHistory(data.screening_qa.slice().reverse());
+        } else {
+          setQaHistory([]);
+        }
         if (data.selected_persona) setPersona(data.selected_persona);
         if (data.language) setLanguage(data.language);
       })
       .catch(() => {
-        // Fallback if rundown cannot be fetched
+        setRundown(null);
+        setQaHistory([]);
       });
   }, [selectedJob?.id, profile]);
 
@@ -271,6 +386,17 @@ export function TailoringStudio({
     setCompiling(true);
 
     const timer = window.setTimeout(() => {
+      const isSpecEmpty =
+        !resumeSpec.name &&
+        !resumeSpec.title &&
+        (!resumeSpec.sections || resumeSpec.sections.length === 0);
+
+      if (isSpecEmpty) {
+        setPreview(null);
+        setCompiling(false);
+        return;
+      }
+
       api
         .previewResume(resumeSpec)
         .then((res) => {
@@ -327,33 +453,115 @@ export function TailoringStudio({
     }, 2000);
   };
 
-  const handleRunTailor = async () => {
-    if (!selectedJob) {
+  const handleSwitchMode = (newMode: ResumeMode) => {
+    if (newMode === resumeMode) return;
+    if (resumeMode === "ats") {
+      setAtsSpec(resumeSpec);
+    } else {
+      setHumanSpec(resumeSpec);
+    }
+    setResumeMode(newMode);
+
+    if (newMode === "ats") {
+      if (atsSpec) {
+        setResumeSpec(atsSpec);
+      }
+    } else {
+      if (humanSpec) {
+        setResumeSpec(humanSpec);
+      }
+    }
+  };
+
+  const handleRunTailor = async (modeToRun?: ResumeMode) => {
+    let jobToTailor = selectedJob;
+
+    if (isManualMode) {
+      const title = manualTitle.trim();
+      const comp = manualCompany.trim();
+      const desc = manualDescription.trim();
+      if (!title || !comp || !desc) {
+        onNotify("error", t("studio.manualValidation"));
+        return;
+      }
+      setTailoring(true);
+      try {
+        const created = await api.createManualJob({
+          title,
+          company: comp,
+          location: manualLocation.trim() || null,
+          raw_description: desc,
+        });
+        setJobs((prev) => [created, ...prev.filter((j) => j.id !== created.id)]);
+        onSelectJob(created);
+        setIsManualMode(false);
+        jobToTailor = created;
+      } catch (err) {
+        setTailoring(false);
+        onNotify(
+          "error",
+          err instanceof Error ? err.message : "Falha ao cadastrar vaga manual"
+        );
+        return;
+      }
+    }
+
+    if (!jobToTailor) {
       onNotify("error", "Select a job posting first to run AI tailoring.");
       return;
     }
+    const targetMode = modeToRun || resumeMode;
     setTailoring(true);
     try {
-      const result = await api.tailorJob(selectedJob.id);
+      const result = await api.tailorJob(jobToTailor.id, targetMode);
       setPersona(result.selected_persona);
       setLanguage(result.language);
       setAtsKeywords(result.ats_keywords);
       setMatchPercentage(result.match_percentage);
-      setResumeSpec({
-        ...result.resume_spec,
-        sections: normalizeSections(result.resume_spec.sections || []),
-      });
+
+      const rawAts =
+        result.resume_spec_ats || (targetMode === "ats" ? result.resume_spec : atsSpec);
+      const rawHuman =
+        result.resume_spec_human || (targetMode === "human" ? result.resume_spec : humanSpec);
+      const parsedAts = rawAts
+        ? { ...rawAts, sections: normalizeSections(rawAts.sections || []) }
+        : null;
+      const parsedHuman = rawHuman
+        ? { ...rawHuman, sections: normalizeSections(rawHuman.sections || []) }
+        : null;
+
+      setAtsSpec(parsedAts);
+      setHumanSpec(parsedHuman);
+
+      if (targetMode === "human") {
+        setResumeMode("human");
+        if (parsedHuman) {
+          setResumeSpec(parsedHuman);
+        }
+      } else {
+        setResumeMode("ats");
+        if (parsedAts) {
+          setResumeSpec(parsedAts);
+        }
+      }
+
       setCoverLetter(result.cover_letter_text);
 
       // Refresh Gupy rundown with newly tailored summary
       api
-        .getGupyRundown(selectedJob.id)
-        .then((r) => setRundown(r))
+        .getGupyRundown(jobToTailor.id)
+        .then((r) => {
+          setRundown(r);
+          if (r.screening_qa && r.screening_qa.length > 0) {
+            setQaHistory(r.screening_qa.slice().reverse());
+          }
+        })
         .catch(() => {});
 
+      const modeLabel = targetMode === "human" ? "Human Curation (2-Page)" : "ATS Optimized";
       onNotify(
         "success",
-        `Tailored for ${selectedJob.company} using "${result.selected_persona}" lens (${result.match_percentage}% ATS match).`
+        `Tailored (${modeLabel}) for ${jobToTailor.company} using "${result.selected_persona}" lens (${result.match_percentage}% ATS match).`
       );
     } catch (err) {
       onNotify(
@@ -379,7 +587,13 @@ export function TailoringStudio({
     setSolvingQuestion(true);
     try {
       const res = await api.solveQuestion(selectedJob.id, q);
-      setQaHistory((prev) => [res, ...prev]);
+      setQaHistory((prev) => [
+        res,
+        ...prev.filter(
+          (item) =>
+            item.question.trim().toLowerCase() !== res.question.trim().toLowerCase()
+        ),
+      ]);
       setQuestionInput("");
       onNotify("success", "Drafted grounded screening answer.");
     } catch (err) {
@@ -471,7 +685,7 @@ export function TailoringStudio({
     try {
       const { blob, filename } = await api.exportCoverLetter(
         {
-          name: resumeSpec.name || "Candidate",
+          name: resumeSpec.name || "",
           title: resumeSpec.title || "Cover Letter",
           contact: resumeSpec.contact || "",
           recipient: selectedJob
@@ -505,12 +719,21 @@ export function TailoringStudio({
   };
 
   const pageCount = preview?.page_count ?? 1;
-  const isOverflow = preview ? !preview.is_valid_2_page || pageCount > 2 : false;
-  const fillPercent = Math.min(100, Math.round((pageCount / 2) * 100));
-  const meterColor = isOverflow
-    ? "var(--danger)"
-    : pageCount === 2
-      ? "var(--success)"
+  const isOverflow =
+    resumeMode === "human"
+      ? preview
+        ? !preview.is_valid_2_page || pageCount > 2
+        : false
+      : false;
+  const fillPercent =
+    resumeMode === "human"
+      ? Math.min(100, Math.round((pageCount / 2) * 100))
+      : Math.min(100, Math.round((pageCount / Math.max(pageCount, 2)) * 100));
+  const meterColor =
+    resumeMode === "human"
+      ? isOverflow
+        ? "var(--danger)"
+        : "var(--success)"
       : "var(--accent)";
 
   return (
@@ -543,10 +766,10 @@ export function TailoringStudio({
           <button
             type="button"
             className="btn btn-primary"
-            onClick={handleRunTailor}
-            disabled={tailoring || !selectedJob}
+            onClick={() => void handleRunTailor()}
+            disabled={tailoring || (!selectedJob && !isManualMode)}
           >
-            {tailoring ? "Tailoring with AI..." : "✨ Tailor with AI"}
+            {tailoring ? "Tailoring with AI..." : "Tailor with AI"}
           </button>
         </div>
       </div>
@@ -579,79 +802,249 @@ export function TailoringStudio({
             </span>
           </div>
 
-          <div className="field">
-            <label className="field-label" htmlFor="studio-job-select">
-              Target Job Posting
+          {/* Manual mode checkbox */}
+          <div style={{ marginBottom: "0.75rem", paddingBottom: "0.5rem", borderBottom: "1px solid var(--border-subtle)" }}>
+            <label className="checkbox-pill" style={{ display: "inline-flex", cursor: "pointer", userSelect: "none" }}>
+              <input
+                type="checkbox"
+                checked={isManualMode}
+                onChange={(e) => handleToggleManualMode(e.target.checked)}
+              />
+              <span style={{ fontWeight: 600 }}>{t("studio.manualMode")}</span>
             </label>
-            <select
-              id="studio-job-select"
-              className="select"
-              value={selectedJob?.id ?? ""}
-              onChange={(e) => {
-                const found = jobs.find((j) => j.id === Number(e.target.value));
-                if (found) onSelectJob(found);
-              }}
-            >
-              {jobs.length === 0 ? (
-                <option value="">No jobs discovered yet</option>
-              ) : (
-                jobs.map((j) => (
-                  <option key={j.id} value={j.id}>
-                    {j.title} — {j.company} ({j.platform})
-                  </option>
-                ))
-              )}
-            </select>
           </div>
 
-          {selectedJob ? (
-            <>
-              <div className="studio-job-summary">
-                <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
-                  {selectedJob.title}
-                </div>
-                <div
-                  style={{
-                    fontSize: "0.825rem",
-                    color: "var(--ink-secondary)",
-                  }}
-                >
-                  {selectedJob.company} •{" "}
-                  {selectedJob.location || "Remote / Flexible"}
-                </div>
+          {!isManualMode && (
+            <div className="field" style={{ flexShrink: 0 }}>
+              <label className="field-label" htmlFor="studio-job-select">
+                Target Job Posting
+              </label>
+              <select
+                id="studio-job-select"
+                className="select"
+                value={selectedJob?.id ?? ""}
+                onChange={(e) => {
+                  const found = jobs.find((j) => j.id === Number(e.target.value));
+                  if (found) onSelectJob(found);
+                }}
+              >
+                {jobs.length === 0 ? (
+                  <option value="">No jobs discovered yet</option>
+                ) : (
+                  jobs.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.title} — {j.company} ({j.platform === "manual" ? "[Manual]" : j.platform})
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+          )}
+
+          {isManualMode ? (
+            <div className="manual-job-form" style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "0.25rem", flex: 1 }}>
+              <div className="field">
+                <label className="field-label" htmlFor="manual-job-title">
+                  {t("studio.manualJobTitle")} *
+                </label>
+                <input
+                  id="manual-job-title"
+                  className="input"
+                  value={manualTitle}
+                  onChange={(e) => setManualTitle(e.target.value)}
+                  placeholder={t("studio.manualPlaceholderTitle")}
+                />
               </div>
 
               <div className="field">
-                <span className="field-label">
-                  Grounded ATS Keywords ({atsKeywords.length})
-                </span>
-                <div className="tag-list" aria-label="Extracted ATS keywords">
-                  {atsKeywords.length === 0 ? (
-                    <span
-                      style={{
-                        fontSize: "0.8rem",
-                        color: "var(--ink-placeholder)",
-                      }}
-                    >
-                      Click &quot;Tailor with AI&quot; to extract keywords.
-                    </span>
-                  ) : (
-                    atsKeywords.map((kw) => (
-                      <span key={kw} className="tag-chip">
-                        {kw}
-                      </span>
-                    ))
-                  )}
-                </div>
+                <label className="field-label" htmlFor="manual-job-company">
+                  {t("studio.manualCompany")} *
+                </label>
+                <input
+                  id="manual-job-company"
+                  className="input"
+                  value={manualCompany}
+                  onChange={(e) => setManualCompany(e.target.value)}
+                  placeholder={t("studio.manualPlaceholderCompany")}
+                />
               </div>
 
-              <div className="field" style={{ flex: 1 }}>
-                <span className="field-label">Job Description</span>
-                <div className="studio-job-scroll">
-                  {selectedJob.cleaned_text || selectedJob.raw_description}
-                </div>
+              <div className="field">
+                <label className="field-label" htmlFor="manual-job-location">
+                  {t("studio.manualLocation")}
+                </label>
+                <input
+                  id="manual-job-location"
+                  className="input"
+                  value={manualLocation}
+                  onChange={(e) => setManualLocation(e.target.value)}
+                  placeholder={t("studio.manualPlaceholderLocation")}
+                />
               </div>
-            </>
+
+              <div className="field" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                <label className="field-label" htmlFor="manual-job-description">
+                  {t("studio.manualDescription")} *
+                </label>
+                <textarea
+                  id="manual-job-description"
+                  className="input"
+                  rows={8}
+                  style={{
+                    resize: "vertical",
+                    fontFamily: "var(--font-mono, monospace)",
+                    fontSize: "0.85rem",
+                    lineHeight: "1.4",
+                    flex: 1,
+                  }}
+                  value={manualDescription}
+                  onChange={(e) => setManualDescription(e.target.value)}
+                  placeholder={t("studio.manualPlaceholderDescription")}
+                />
+              </div>
+            </div>
+          ) : selectedJob ? (
+            (() => {
+              const jobText =
+                selectedJob.cleaned_text || selectedJob.raw_description || "";
+              const wordCount = jobText.trim()
+                ? jobText.trim().split(/\s+/).length
+                : 0;
+              const isShort = wordCount > 0 && wordCount < 50;
+
+              return (
+                <>
+                  <div className="studio-job-summary">
+                    <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
+                      {selectedJob.title}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "0.825rem",
+                        color: "var(--ink-secondary)",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "0.4rem",
+                        alignItems: "center",
+                        marginTop: "0.2rem",
+                      }}
+                    >
+                      <span>{selectedJob.company}</span>
+                      <span>•</span>
+                      <span>{selectedJob.location || "Remote / Flexible"}</span>
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "0.35rem",
+                        alignItems: "center",
+                        marginTop: "0.5rem",
+                      }}
+                    >
+                      <span
+                        className="status-pill"
+                        style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem" }}
+                      >
+                        {t("studio.modality", {
+                          type:
+                            selectedJob.remote_type || t("studio.unspecified"),
+                        })}
+                      </span>
+                      <span
+                        className="status-pill"
+                        style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem" }}
+                      >
+                        {t("studio.status", { status: selectedJob.status })}
+                      </span>
+                      <span
+                        className="status-pill"
+                        style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem" }}
+                      >
+                        {selectedJob.platform.toUpperCase()}
+                      </span>
+                      {isShort && (
+                        <span
+                          className="status-pill"
+                          style={{
+                            fontSize: "0.75rem",
+                            padding: "0.15rem 0.5rem",
+                            borderColor: "var(--warning)",
+                            color: "var(--warning)",
+                          }}
+                        >
+                          {t("studio.shortDescription", { count: wordCount })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="field" style={{ flexShrink: 0 }}>
+                    <span className="field-label">
+                      Grounded ATS Keywords ({atsKeywords.length})
+                    </span>
+                    <div className="tag-list" aria-label="Extracted ATS keywords">
+                      {atsKeywords.length === 0 ? (
+                        <span
+                          style={{
+                            fontSize: "0.8rem",
+                            color: "var(--ink-placeholder)",
+                          }}
+                        >
+                          Click &quot;Tailor with AI&quot; to extract keywords.
+                        </span>
+                      ) : (
+                        atsKeywords.map((kw) => (
+                          <span key={kw} className="tag-chip">
+                            {kw}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    className="field"
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      minHeight: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: "0.35rem",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span className="field-label" style={{ marginBottom: 0 }}>
+                        {t("studio.jobDescription")}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "0.75rem",
+                          color: "var(--ink-secondary)",
+                        }}
+                      >
+                        {t("studio.wordCount", { count: wordCount })}
+                      </span>
+                    </div>
+                    <div
+                      className="studio-job-scroll"
+                      tabIndex={0}
+                      role="region"
+                      aria-label="Full job description"
+                    >
+                      {jobText || t("studio.noJobDescription")}
+                    </div>
+                  </div>
+                </>
+              );
+            })()
           ) : (
             <p style={{ color: "var(--ink-secondary)", fontSize: "0.875rem" }}>
               Select a scraped job from Job Radar or use the dropdown above to
@@ -715,6 +1108,80 @@ export function TailoringStudio({
               aria-labelledby="studio-tab-resume"
               className="studio-tab-body"
             >
+              {/* Dual Resume Mode Segmented Control */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "1rem",
+                  padding: "0.5rem 0.75rem",
+                  backgroundColor: "rgba(0, 0, 0, 0.03)",
+                  borderRadius: "6px",
+                  border: "1px solid var(--line, #e2e8f0)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--ink-secondary)" }}>
+                    Mode:
+                  </span>
+                  <div style={{ display: "flex", gap: "0.25rem" }} role="group" aria-label="Resume Mode Selector">
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${resumeMode === "ats" ? "btn-primary" : ""}`}
+                      onClick={() => handleSwitchMode("ats")}
+                    >
+                      ATS Optimized
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${resumeMode === "human" ? "btn-primary" : ""}`}
+                      onClick={() => handleSwitchMode("human")}
+                    >
+                      Recruiter / Human (2-Page)
+                    </button>
+                  </div>
+                </div>
+
+                <span style={{ fontSize: "0.78rem", color: "var(--ink-secondary)" }}>
+                  {resumeMode === "ats"
+                    ? "Full keyword density • flexible sizing"
+                    : "Executive curation • strict 2-page limit"}
+                </span>
+              </div>
+
+              {resumeMode === "human" && !humanSpec && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "0.85rem 1rem",
+                    marginBottom: "1rem",
+                    borderRadius: "6px",
+                    backgroundColor: "rgba(31, 58, 95, 0.06)",
+                    border: "1px solid rgba(31, 58, 95, 0.2)",
+                  }}
+                >
+                  <div>
+                    <strong style={{ fontSize: "0.875rem", display: "block" }}>
+                      Versao de Leitura Humana ainda nao gerada
+                    </strong>
+                    <span style={{ fontSize: "0.8rem", color: "var(--ink-secondary)" }}>
+                      A IA seleciona as 2 a 3 experiencias mais relevantes e enxuga o conteudo para 2 paginas.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    onClick={() => void handleRunTailor("human")}
+                    disabled={tailoring || (!selectedJob && !isManualMode)}
+                  >
+                    {tailoring ? "Gerando..." : "Gerar Versao Humana com Julgamento da IA"}
+                  </button>
+                </div>
+              )}
+
               <div className="form-grid">
                 <div className="field">
                   <label className="field-label" htmlFor="spec-header-title">
@@ -755,7 +1222,23 @@ export function TailoringStudio({
               </div>
 
               <div className="studio-sections-scroll">
-                {resumeSpec.sections.map((sec, sIdx) => (
+                {resumeSpec.sections.length === 0 ? (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: "2.5rem 1rem",
+                      color: "var(--ink-secondary)",
+                    }}
+                  >
+                    <p style={{ margin: "0 0 0.5rem 0", fontWeight: 600 }}>
+                      No resume content yet
+                    </p>
+                    <p style={{ margin: 0, fontSize: "0.85rem" }}>
+                      Configure your Master Profile or click &quot;✨ Tailor with AI&quot; to generate your customized resume.
+                    </p>
+                  </div>
+                ) : (
+                  resumeSpec.sections.map((sec, sIdx) => (
                   <div key={`${sec.title}-${sIdx}`} className="skill-category">
                     <div className="skill-category-header">
                       <strong style={{ fontSize: "0.9rem" }}>{sec.title}</strong>
@@ -819,7 +1302,7 @@ export function TailoringStudio({
                       ))}
                     </div>
                   </div>
-                ))}
+                )))}
               </div>
             </div>
           )}
@@ -883,6 +1366,7 @@ export function TailoringStudio({
                 id="cover-letter-textarea"
                 aria-label="Cover Letter Editor"
                 className="textarea"
+                placeholder="Click '✨ Tailor with AI' to generate a tailored cover letter, or write one here..."
                 style={{ minHeight: "480px", lineHeight: 1.6 }}
                 value={coverLetter}
                 onChange={(e) => setCoverLetter(e.target.value)}
@@ -1113,6 +1597,7 @@ export function TailoringStudio({
         <aside
           className="panel studio-pane"
           aria-labelledby="studio-right-heading"
+          style={{ overflowY: "auto" }}
         >
           <div className="panel-header">
             <div>
@@ -1156,7 +1641,11 @@ export function TailoringStudio({
               <span
                 className="status-pill"
                 style={{
-                  borderColor: isOverflow ? "var(--danger)" : "var(--success)",
+                  borderColor: isOverflow
+                    ? "var(--danger)"
+                    : resumeMode === "human"
+                      ? "var(--success)"
+                      : "var(--accent)",
                   color: "var(--ink-primary)",
                 }}
               >
@@ -1165,12 +1654,15 @@ export function TailoringStudio({
                   style={{
                     backgroundColor: isOverflow
                       ? "var(--danger)"
-                      : "var(--success)",
+                      : resumeMode === "human"
+                        ? "var(--success)"
+                        : "var(--accent)",
                   }}
                 />
                 <span>
-                  {pageCount} / 2 pages{" "}
-                  {isOverflow ? "(Overflow!)" : "(ATS Ready)"}
+                  {resumeMode === "human"
+                    ? `${pageCount} / 2 pages (Regra Estrita)`
+                    : `${pageCount} pages (Sugestao de dimensionamento)`}
                 </span>
               </span>
             </div>
@@ -1180,7 +1672,7 @@ export function TailoringStudio({
               role="progressbar"
               aria-valuenow={pageCount}
               aria-valuemin={0}
-              aria-valuemax={2}
+              aria-valuemax={resumeMode === "human" ? 2 : Math.max(2, pageCount)}
             >
               <div
                 className="budget-fill"
@@ -1193,7 +1685,6 @@ export function TailoringStudio({
 
             {isOverflow && (
               <div className="budget-alert" role="alert">
-                <span>⚠️</span>
                 <span>
                   Exceeds 2-page limit! Prune bullets in Resume Editor.
                 </span>
@@ -1252,10 +1743,16 @@ export function TailoringStudio({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: "var(--bg-base)",
+                color: "var(--ink-secondary)",
+                textAlign: "center",
+                padding: "2rem",
               }}
             >
-              <p>Generating PDF preview...</p>
+              <p>
+                {compiling
+                  ? t("studio.generatingPreview")
+                  : t("studio.noResumeContent")}
+              </p>
             </div>
           )}
         </aside>

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api, LLMProvider, SystemSettings } from "../api";
+import { AppLanguage, useTranslation } from "../i18n";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -12,6 +13,7 @@ const PROVIDERS: { value: LLMProvider; label: string }[] = [
   { value: "gemini", label: "Google Gemini" },
   { value: "openai", label: "OpenAI" },
   { value: "claude", label: "Anthropic Claude" },
+  { value: "openrouter", label: "OpenRouter" },
   { value: "ollama", label: "Ollama (Local)" },
 ];
 
@@ -21,11 +23,15 @@ export function SettingsModal({
   onClose,
   onSaved,
 }: SettingsModalProps) {
+  const { language, setLanguage, t } = useTranslation();
+  const [formLanguage, setFormLanguage] = useState<AppLanguage>(language);
   const [form, setForm] = useState<SystemSettings>({
     active_provider: "gemini",
+    selected_model: "",
     gemini_api_key: "",
     openai_api_key: "",
     anthropic_api_key: "",
+    openrouter_api_key: "",
     ollama_base_url: "http://localhost:11434",
     scraper_headless: true,
     scraper_timeout: 30,
@@ -33,6 +39,9 @@ export function SettingsModal({
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelFetchMsg, setModelFetchMsg] = useState<string | null>(null);
   const [testFeedback, setTestFeedback] = useState<{
     ok: boolean;
     message: string;
@@ -41,12 +50,17 @@ export function SettingsModal({
   const selectRef = useRef<HTMLSelectElement | null>(null);
 
   useEffect(() => {
+    if (isOpen) {
+      setFormLanguage(language);
+    }
     if (isOpen && initialSettings) {
       setForm({
         active_provider: initialSettings.active_provider,
+        selected_model: initialSettings.selected_model ?? "",
         gemini_api_key: initialSettings.gemini_api_key ?? "",
         openai_api_key: initialSettings.openai_api_key ?? "",
         anthropic_api_key: initialSettings.anthropic_api_key ?? "",
+        openrouter_api_key: initialSettings.openrouter_api_key ?? "",
         ollama_base_url:
           initialSettings.ollama_base_url || "http://localhost:11434",
         scraper_headless: initialSettings.scraper_headless,
@@ -54,10 +68,11 @@ export function SettingsModal({
       });
       setTestFeedback(null);
       setError(null);
+      setModelFetchMsg(null);
       setVisibleKeys({});
       setTimeout(() => selectRef.current?.focus(), 20);
     }
-  }, [isOpen, initialSettings]);
+  }, [isOpen, initialSettings, language]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -74,6 +89,39 @@ export function SettingsModal({
     setVisibleKeys((prev) => ({ ...prev, [field]: !prev[field] }));
   };
 
+  const handleFetchModels = async () => {
+    setFetchingModels(true);
+    setModelFetchMsg(null);
+    try {
+      const provider = form.active_provider;
+      let keyToPass = "";
+      if (provider === "gemini") keyToPass = form.gemini_api_key ?? "";
+      else if (provider === "openai") keyToPass = form.openai_api_key ?? "";
+      else if (provider === "claude") keyToPass = form.anthropic_api_key ?? "";
+      else if (provider === "openrouter") keyToPass = form.openrouter_api_key ?? "";
+
+      const res = await api.fetchModels(provider, keyToPass);
+      setAvailableModels(res.models || []);
+      if (res.models && res.models.length > 0) {
+        if (!form.selected_model || !res.models.includes(form.selected_model)) {
+          setForm((prev) => ({
+            ...prev,
+            selected_model: res.default_model || res.models[0],
+          }));
+        }
+        setModelFetchMsg(`Found ${res.models.length} available models.`);
+      } else {
+        setModelFetchMsg("Using default standard model list.");
+      }
+    } catch (err) {
+      setModelFetchMsg(
+        err instanceof Error ? err.message : "Failed to fetch models."
+      );
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
   const handleTestConnection = async () => {
     setTesting(true);
     setTestFeedback(null);
@@ -87,6 +135,8 @@ export function SettingsModal({
         credentialReady = Boolean(form.openai_api_key?.trim());
       } else if (provider === "claude") {
         credentialReady = Boolean(form.anthropic_api_key?.trim());
+      } else if (provider === "openrouter") {
+        credentialReady = Boolean(form.openrouter_api_key?.trim());
       } else if (provider === "ollama") {
         credentialReady = Boolean(form.ollama_base_url?.trim());
       }
@@ -120,13 +170,18 @@ export function SettingsModal({
     try {
       const updated = await api.saveSettings({
         active_provider: form.active_provider,
+        selected_model: form.selected_model ?? "",
         gemini_api_key: form.gemini_api_key ?? "",
         openai_api_key: form.openai_api_key ?? "",
         anthropic_api_key: form.anthropic_api_key ?? "",
+        openrouter_api_key: form.openrouter_api_key ?? "",
         ollama_base_url: form.ollama_base_url,
         scraper_headless: form.scraper_headless,
         scraper_timeout: Number(form.scraper_timeout) || 30,
       });
+      if (formLanguage !== language) {
+        setLanguage(formLanguage);
+      }
       onSaved(updated);
       onClose();
     } catch (err) {
@@ -137,7 +192,11 @@ export function SettingsModal({
   };
 
   const renderSecretField = (
-    keyName: "gemini_api_key" | "openai_api_key" | "anthropic_api_key",
+    keyName:
+      | "gemini_api_key"
+      | "openai_api_key"
+      | "anthropic_api_key"
+      | "openrouter_api_key",
     label: string,
     placeholder: string
   ) => {
@@ -164,9 +223,13 @@ export function SettingsModal({
             type="button"
             className="btn btn-sm"
             onClick={() => toggleVisibility(keyName)}
-            aria-label={isVisible ? `Hide ${label}` : `Show ${label}`}
+            aria-label={
+              isVisible
+                ? `${t("settings.hide")} ${label}`
+                : `${t("settings.show")} ${label}`
+            }
           >
-            {isVisible ? "Hide" : "Show"}
+            {isVisible ? t("settings.hide") : t("settings.show")}
           </button>
         </div>
       </div>
@@ -188,7 +251,7 @@ export function SettingsModal({
       >
         <div className="panel-header">
           <h2 id="settings-modal-title" className="panel-title">
-            System Settings & LLM Providers
+            {t("settings.title")}
           </h2>
           <button
             type="button"
@@ -205,20 +268,39 @@ export function SettingsModal({
           style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}
         >
           <div className="field">
+            <label className="field-label" htmlFor="setting-language">
+              {t("settings.language")}
+            </label>
+            <select
+              id="setting-language"
+              className="select"
+              value={formLanguage}
+              onChange={(e) => setFormLanguage(e.target.value as AppLanguage)}
+            >
+              <option value="en">English (EN)</option>
+              <option value="pt-BR">Português (pt-BR)</option>
+            </select>
+          </div>
+
+          <div className="field">
             <label className="field-label" htmlFor="setting-active-provider">
-              Active LLM Provider
+              {t("settings.activeProvider")}
             </label>
             <select
               ref={selectRef}
               id="setting-active-provider"
               className="select"
               value={form.active_provider}
-              onChange={(e) =>
+              onChange={(e) => {
+                const nextProvider = e.target.value as LLMProvider;
                 setForm((prev) => ({
                   ...prev,
-                  active_provider: e.target.value as LLMProvider,
-                }))
-              }
+                  active_provider: nextProvider,
+                  selected_model: "",
+                }));
+                setAvailableModels([]);
+                setModelFetchMsg(null);
+              }}
             >
               {PROVIDERS.map((p) => (
                 <option key={p.value} value={p.value}>
@@ -228,25 +310,99 @@ export function SettingsModal({
             </select>
           </div>
 
+          <div className="field">
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "0.25rem",
+              }}
+            >
+              <label className="field-label" htmlFor="setting-selected-model">
+                {t("settings.selectedModel")} ({form.active_provider})
+              </label>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={handleFetchModels}
+                disabled={fetchingModels}
+              >
+                {fetchingModels
+                  ? t("settings.fetchingModels")
+                  : t("settings.fetchModels")}
+              </button>
+            </div>
+            {availableModels.length > 0 ? (
+              <select
+                id="setting-selected-model"
+                className="select"
+                value={form.selected_model || availableModels[0] || ""}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    selected_model: e.target.value,
+                  }))
+                }
+              >
+                {availableModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id="setting-selected-model"
+                className="input"
+                type="text"
+                placeholder="e.g. gemini-3.5-flash-lite, gpt-4o-mini"
+                value={form.selected_model || ""}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    selected_model: e.target.value,
+                  }))
+                }
+              />
+            )}
+            {modelFetchMsg && (
+              <span
+                style={{
+                  fontSize: "0.75rem",
+                  color: "var(--ink-secondary)",
+                  marginTop: "0.2rem",
+                }}
+              >
+                {modelFetchMsg}
+              </span>
+            )}
+          </div>
+
           {renderSecretField(
             "gemini_api_key",
-            "Gemini API Key",
+            t("settings.geminiKey"),
             "AIzaSy... (stored locally)"
           )}
           {renderSecretField(
             "openai_api_key",
-            "OpenAI API Key",
+            t("settings.openaiKey"),
             "sk-... (stored locally)"
           )}
           {renderSecretField(
             "anthropic_api_key",
-            "Anthropic Claude API Key",
+            t("settings.anthropicKey"),
             "sk-ant-... (stored locally)"
+          )}
+          {renderSecretField(
+            "openrouter_api_key",
+            t("settings.openrouterKey"),
+            "sk-or-v1-... (stored locally)"
           )}
 
           <div className="field">
             <label className="field-label" htmlFor="setting-ollama-url">
-              Ollama Base URL
+              {t("settings.ollamaUrl")}
             </label>
             <input
               id="setting-ollama-url"
@@ -266,7 +422,7 @@ export function SettingsModal({
           <div className="form-grid">
             <div className="field">
               <label className="field-label" htmlFor="setting-scraper-timeout">
-                Scraper Timeout (seconds)
+                {t("settings.timeout")}
               </label>
               <input
                 id="setting-scraper-timeout"
@@ -307,7 +463,7 @@ export function SettingsModal({
                     }))
                   }
                 />
-                Run Scraper in Headless Mode
+                {t("settings.headless")}
               </label>
             </div>
           </div>
@@ -362,7 +518,7 @@ export function SettingsModal({
               onClick={handleTestConnection}
               disabled={testing || saving}
             >
-              {testing ? "Testing..." : "Test Connection"}
+              {testing ? t("settings.testing") : t("settings.testConnection")}
             </button>
 
             <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -372,10 +528,10 @@ export function SettingsModal({
                 onClick={onClose}
                 disabled={saving}
               >
-                Cancel
+                {t("settings.cancel")}
               </button>
               <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? "Saving..." : "Save Settings"}
+                {saving ? t("settings.saving") : t("settings.save")}
               </button>
             </div>
           </div>

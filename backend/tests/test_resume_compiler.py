@@ -189,3 +189,38 @@ def test_compiler_cover_letter_export_endpoints():
     )
     doc = Document(io.BytesIO(res_docx.content))
     assert any("Acme Corp" in p.text for p in doc.paragraphs)
+
+
+def test_skillline_pipes_render_in_single_paragraph_without_overflow():
+    compiler = ResumeCompiler()
+    spec = ResumeSpec(
+        title="Davi Bernardes Machado",
+        contact="São Paulo, SP | davi@example.com",
+        sections=[
+            ResumeSection(
+                title="Technical Skills",
+                blocks=[
+                    ResumeBlock(
+                        type="skillline",
+                        text="Python | FastAPI | AWS | Docker",
+                    ),
+                    ResumeBlock(
+                        type="skillline",
+                        text=(
+                            "**Backend:** Python, Go, FastAPI || "
+                            "**Cloud:** AWS, Docker, Kubernetes || "
+                            "**Data:** PostgreSQL, Redis"
+                        ),
+                    ),
+                ],
+            )
+        ],
+    )
+    pdf_buf, page_count = compiler.compile_pdf(spec)
+    assert isinstance(pdf_buf, io.BytesIO)
+    reader = PdfReader(pdf_buf)
+    assert page_count == 1
+    assert len(reader.pages) == 1
+    text = reader.pages[0].extract_text() or ""
+    assert "FastAPI" in text
+    assert "Kubernetes" in text

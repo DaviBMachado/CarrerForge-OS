@@ -4,6 +4,7 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError
 from sqlmodel import Session, select
 
+from backend.app.logging_config import get_logger
 from backend.app.models import Experience, JobPosting, MasterProfile, TailoredArtifact
 from backend.app.services.llm_orchestrator import (
     LLMOrchestrator,
@@ -12,7 +13,9 @@ from backend.app.services.llm_orchestrator import (
     detect_language,
     select_persona,
 )
-from backend.app.services.resume_compiler import ResumeSpec
+from backend.app.services.resume_compiler import ResumeCompiler, ResumeSpec
+
+logger = get_logger("careerforge.tailor")
 
 _KNOWN_TECH_VOCAB: set[str] = {
     "python",
@@ -130,7 +133,16 @@ class TailoringResult(BaseModel):
     ats_keywords: list[str] = Field(default_factory=list)
     match_percentage: int = 0
     resume_spec: ResumeSpec
+    resume_spec_ats: ResumeSpec | None = None
+    resume_spec_human: ResumeSpec | None = None
     cover_letter_text: str
+
+
+class SolveQuestionResponse(BaseModel):
+    question: str
+    answer: str
+    language: TargetLanguage
+    grounded_experiences: list[str] = Field(default_factory=list)
 
 
 class GupyRundown(BaseModel):
@@ -139,17 +151,11 @@ class GupyRundown(BaseModel):
     prioritized_skill_tags: list[str] = Field(default_factory=list)
     language: TargetLanguage
     selected_persona: str
+    screening_qa: list[SolveQuestionResponse] = Field(default_factory=list)
 
 
 class SolveQuestionRequest(BaseModel):
     question: str = Field(min_length=2)
-
-
-class SolveQuestionResponse(BaseModel):
-    question: str
-    answer: str
-    language: TargetLanguage
-    grounded_experiences: list[str] = Field(default_factory=list)
 
 
 def _tokenize_lower(text: str) -> set[str]:
@@ -266,7 +272,7 @@ def verify_factual_guardrails(
             spec_chunks.append(block.text)
             if block.type == "subheading" and "|" in block.text:
                 rhs = block.text.split("|", 1)[1].strip()
-                rhs_clean = re.sub(r"\([^)]*\)", "", rhs).strip()
+                rhs_clean = re.sub(r"\[[^\]]*\]|\([^)]*\)", "", rhs).strip()
                 if rhs_clean and allowed_companies:
                     rhs_lower = rhs_clean.lower()
                     if (
@@ -276,9 +282,9 @@ def verify_factual_guardrails(
                         )
                         and rhs_lower not in corpus
                     ):
-                        raise FactualGuardrailError(
-                            f"Ungrounded company or organization in subheading: '{rhs_clean}'"
-                        )
+                        err_msg = f"Ungrounded company or organization in subheading: '{rhs_clean}'"
+                        logger.warning(f"Factual guardrail violation: {err_msg}")
+                        raise FactualGuardrailError(err_msg)
 
     spec_text = " ".join(spec_chunks).lower()
     spec_tokens = _tokenize_lower(spec_text)
@@ -291,40 +297,123 @@ def verify_factual_guardrails(
 
     if fabricated_techs:
         joined = ", ".join(fabricated_techs)
-        raise FactualGuardrailError(
-            f"Guardrail violation: ungrounded technologies detected in resume: {joined}"
-        )
+        err_msg = f"Guardrail violation: ungrounded technologies detected in resume: {joined}"
+        logger.warning(f"Factual guardrail violation: {err_msg}")
+        raise FactualGuardrailError(err_msg)
+
+    logger.info("Factual guardrail check passed: zero ungrounded technologies detected")
 
 
-def build_tailoring_system_prompt(
+def build_ats_system_prompt(
     language: TargetLanguage,
     persona: str,
     grounded_keywords: list[str],
 ) -> str:
     lang_label = "Portuguese (pt-BR)" if language == "pt-br" else "English (en)"
     kw_str = ", ".join(grounded_keywords) if grounded_keywords else "None"
+    contract_subheading_format = (
+        "Cargo (Contrato Temporário) | Empresa (Datas)"
+        if language == "pt-br"
+        else "Role (Contract) | Company (Dates)"
+    )
     return (
         "You are an elite ATS Resume & Cover Letter Tailoring Engine.\n"
-        "STRICT FACTUAL INTEGRITY GUARDRAIL (NON-NEGOTIABLE):\n"
+        "STRICT FACTUAL INTEGRITY & ANTI-AI DIRECTIVES (NON-NEGOTIABLE):\n"
         "1. NEVER fabricate, invent, or extrapolate companies, roles, dates, degrees, "
         "certifications, metrics, or technologies not explicitly present in MasterProfile.\n"
         "2. Rephrasing must be 100% truth-preserving. Only embed ATS keywords grounded "
         "in the candidate's real profile.\n"
-        "3. Structure experience bullet points using impact-driven phrasing "
-        "(Action + Context + Metric) preserving exact numbers from the profile.\n"
+        "3. Resume writing style & density: strictly structure experience bullets as Action + Scope + Metric "
+        "preserving exact numbers from the profile. Prohibit subjective personality adjectives, "
+        "hollow corporate buzzwords, and symmetric triple-item lists. "
+        "COMPREHENSIVE EXPERIENCE EXPANSION: Do not generate an abbreviated, sparse, or half-empty resume. "
+        "Elaborate thoroughly on all experiences from MasterProfile, generating 3 to 6 rich, descriptive bullets "
+        "per role detailing the engineering context, technical challenges tackled, architectural implementations, "
+        "and quantified outcomes. The output should be dense, rich in technical depth, and naturally fill 1.5 to 2 full pages.\n"
         f"4. Output language MUST be strictly {lang_label}.\n"
         f"5. Adopt the focus lens / persona: '{persona}'.\n"
         "6. Naturally align these grounded ATS keywords into the summary and "
         f"experience bullets: [{kw_str}].\n"
-        "7. Draft a concise, professional, 3-paragraph cover letter "
-        "(separated by blank lines '\\n\\n') tailored to the target company and role.\n"
-        "8. Respond strictly with a JSON object containing keys 'resume_spec' "
+        "7. Cover letter directive: draft a concise, professional, 3-paragraph cover letter "
+        "(separated by blank lines '\\n\\n') tailored to the target company and role. "
+        "Begin with a balanced, courteous professional greeting and transition directly "
+        "into technical alignment between job requirements and candidate's delivered solutions. "
+        "Prohibit corporate flattery, cliché opening lines, redundant concluding summaries, "
+        "and robotic transitions.\n"
+        "8. Conceptual Anti-AI directive: write with human technical clarity and high "
+        "information density. Eliminate robotic templates, formulaic symmetries, "
+        "and empty filler.\n"
+        "9. Respond strictly with a JSON object containing keys 'resume_spec' "
         "(conforming to ResumeSpec schema: name, title, contact, filename_title, "
         "sections[{title, blocks[{type, text}]}]) and "
         "'cover_letter' (string with 3 paragraphs separated by '\\n\\n').\n"
         "   Allowed block types: 'paragraph' (summary), 'subheading' (Role | Company (Dates)), "
-        "'bullet' (impact achievement), 'skillline' (**Category:** skills)."
+        "'bullet' (impact achievement), 'skillline' (**Category:** skills).\n"
+        "10. Strict distinction between Commercial Experience, Academic Projects, and Temporary Contracts: "
+        "differentiate formal permanent employment/corporate roles (is_academic: false, is_contract: false) "
+        "from academic research/thesis/capstone projects (is_academic: true) and temporary contract roles (is_contract: true). "
+        "Do NOT present university or academic projects as commercial corporate employment. "
+        "Position academic projects truthfully under an Academic & Research Projects section. "
+        f"For experiences with is_contract: true, the subheading block MUST follow the deterministic format '{contract_subheading_format}'. "
+        "Craft bullets for temporary contracts with strong emphasis on rapid ramp-up, autonomous delivery of agreed project scope, "
+        "and high impact achieved within the fixed engagement period."
     )
+
+
+# Backward-compatibility alias
+build_tailoring_system_prompt = build_ats_system_prompt
+
+
+def build_human_curation_system_prompt(
+    language: TargetLanguage,
+    persona: str,
+    grounded_keywords: list[str],
+) -> str:
+    lang_label = "Portuguese (pt-BR)" if language == "pt-br" else "English (en)"
+    kw_str = ", ".join(grounded_keywords) if grounded_keywords else "None"
+    contract_subheading_format = (
+        "Cargo (Contrato Temporário) | Empresa (Datas)"
+        if language == "pt-br"
+        else "Role (Contract) | Company (Dates)"
+    )
+    return (
+        "You are an executive talent curator and resume strategist crafting an elite, recruiter-facing resume.\n"
+        "STRICT HUMAN CURATION & SELECTIVITY DIRECTIVES:\n"
+        "1. Executive Curation & Prioritization: Analyze the target job and candidate Master Profile. "
+        "Select actively the top 2 to 3 most relevant, high-impact experiences that best prove fit for this target role. "
+        "Omit secondary, unrelated, or routine past roles and tasks to preserve maximum reader focus and impact.\n"
+        "2. Strict 2-Page Budget & Bullet Conciseness: Each selected experience must contain at most 3 punchy, high-impact bullets. "
+        "Every bullet must follow Action + Scope + Metric without corporate fluff or repetitive phrasing. "
+        "The overall resume must fit comfortably within exactly 2 pages.\n"
+        "3. STRICT FACTUAL INTEGRITY (NON-NEGOTIABLE): NEVER fabricate, invent, or extrapolate companies, roles, "
+        "dates, degrees, metrics, or technologies not explicitly present in MasterProfile. Only include facts grounded in the profile.\n"
+        f"4. Output language MUST be strictly {lang_label}.\n"
+        f"5. Professional Lens: '{persona}'.\n"
+        f"6. Integrate relevant grounded keywords seamlessly: [{kw_str}].\n"
+        "7. Cover letter directive: draft a concise, compelling 3-paragraph cover letter tailored to the job.\n"
+        "8. Structure & Schema: Respond strictly with a JSON object containing keys 'resume_spec' "
+        "(conforming to ResumeSpec schema: name, title, contact, filename_title, sections[{title, blocks[{type, text}]}]) "
+        "and 'cover_letter' (string with 3 paragraphs separated by '\\n\\n').\n"
+        "   Allowed block types: 'paragraph' (summary), 'subheading' (Role | Company (Dates)), "
+        "'bullet' (impact achievement), 'skillline' (**Category:** skills).\n"
+        "9. Strict distinction between Commercial Experience, Academic Projects, and Temporary Contracts: "
+        "differentiate formal permanent corporate roles (is_academic: false, is_contract: false) "
+        "from academic projects (is_academic: true) and temporary contract roles (is_contract: true). "
+        "Do NOT present university or academic projects as commercial corporate employment. "
+        f"For experiences with is_contract: true, the subheading block MUST follow the deterministic format '{contract_subheading_format}'. "
+        "Craft bullets for temporary contracts emphasizing rapid ramp-up, autonomous delivery of agreed project scope, "
+        "and high impact within the contract timeframe."
+    )
+
+
+def _parse_dual_specs(raw: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if not isinstance(raw, dict):
+        return None, None
+    if "ats" in raw or "human" in raw:
+        return raw.get("ats"), raw.get("human")
+    if "sections" in raw or "name" in raw or "title" in raw:
+        return raw, None
+    return None, None
 
 
 def _serialize_profile_for_prompt(
@@ -346,6 +435,8 @@ def _serialize_profile_for_prompt(
                 "start_date": exp.start_date,
                 "end_date": exp.end_date,
                 "is_current": exp.is_current,
+                "is_academic": exp.is_academic,
+                "is_contract": getattr(exp, "is_contract", False),
                 "bullets": exp.bullets_json or [],
             }
             for exp in experiences
@@ -395,9 +486,16 @@ def _normalize_cover_letter(raw_letter: Any) -> str:
             paragraphs[longest_idx] = p1
             paragraphs.insert(longest_idx + 1, p2)
         else:
-            mid = max(1, len(paragraphs[longest_idx]) // 2)
-            p1 = paragraphs[longest_idx][:mid].strip()
-            p2 = paragraphs[longest_idx][mid:].strip()
+            p_text = paragraphs[longest_idx]
+            mid = len(p_text) // 2
+            space_indices = [m.start() for m in re.finditer(r"\s+", p_text)]
+            if space_indices:
+                split_at = min(space_indices, key=lambda i: abs(i - mid))
+                p1 = p_text[:split_at].strip()
+                p2 = p_text[split_at:].strip()
+            else:
+                p1 = p_text[:mid].strip()
+                p2 = p_text[mid:].strip()
             paragraphs[longest_idx] = p1
             paragraphs.insert(longest_idx + 1, p2)
 
@@ -409,9 +507,13 @@ def tailor_job_application(
     job: JobPosting,
     profile: MasterProfile,
     orchestrator: LLMOrchestrator | None = None,
+    mode: str = "ats",
 ) -> TailoringResult:
-    """Run the ATS tailoring & cover letter pipeline and persist TailoredArtifact."""
+    """Run the ATS or Human-Curation tailoring & cover letter pipeline and persist TailoredArtifact."""
     assert job.id is not None, "JobPosting must be persisted before tailoring."
+    logger.info(
+        f"Starting tailoring lifecycle for job_id={job.id} ('{job.title}' at '{job.company}') mode='{mode}'"
+    )
     experiences = list(
         session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
     )
@@ -419,8 +521,16 @@ def tailor_job_application(
     language = detect_language(job_text)
     persona = select_persona(job_text, profile)
     _, grounded_keywords, match_pct = extract_ats_keywords(job_text, profile, experiences)
+    logger.info(
+        f"Tailoring strategy selected: persona='{persona}' language='{language}' "
+        f"keywords_count={len(grounded_keywords)} match_percentage={match_pct}% mode='{mode}'"
+    )
 
-    system_prompt = build_tailoring_system_prompt(language, persona, grounded_keywords)
+    if mode == "human":
+        system_prompt = build_human_curation_system_prompt(language, persona, grounded_keywords)
+    else:
+        system_prompt = build_tailoring_system_prompt(language, persona, grounded_keywords)
+
     user_prompt = (
         f"TARGET JOB:\nTitle: {job.title}\nCompany: {job.company}\n"
         f"Description:\n{job_text}\n\n"
@@ -438,6 +548,48 @@ def tailor_job_application(
         raise LLMProviderError(f"LLM output did not match ResumeSpec schema: {exc}") from exc
 
     verify_factual_guardrails(resume_spec, profile, experiences)
+    logger.info(f"Factual guardrails passed for job_id={job.id}")
+
+    if mode == "human":
+        compiler = ResumeCompiler()
+        _, page_count = compiler.compile_pdf(resume_spec, condensed=False)
+        if page_count > 2:
+            logger.info(
+                f"Human resume exceeds 2 pages (compiled to {page_count}). Testing condensed mode."
+            )
+            _, condensed_count = compiler.compile_pdf(resume_spec, condensed=True)
+            if condensed_count > 2:
+                logger.info(
+                    f"Human resume still {condensed_count} pages in condensed mode. "
+                    "Running 1-pass LLM refinement to trim bullets."
+                )
+                refine_prompt = (
+                    f"The following resume specification compiled to {condensed_count} pages and exceeded the strict 2-page limit.\n"
+                    "Please condense the text, shorten lengthy bullets, and ensure each role has at most 2-3 concise high-impact bullets "
+                    "so that it fits comfortably within 2 pages in ReportLab.\n"
+                    "Retain strictly the same factual information, roles, and metrics without inventing anything.\n\n"
+                    f"Resume Spec JSON:\n{resume_spec.model_dump_json(indent=2)}"
+                )
+                refine_sys_prompt = (
+                    "You are an executive resume editor. Shorten the text and bullets while preserving factual accuracy. "
+                    "Respond strictly with a JSON object conforming to ResumeSpec schema: "
+                    "keys 'name', 'title', 'contact', 'filename_title', 'sections[{title, blocks[{type, text}]}]'."
+                )
+                try:
+                    refined_payload = llm.generate_json(
+                        prompt=refine_prompt, system_prompt=refine_sys_prompt
+                    )
+                    raw_refined = (
+                        refined_payload.get("resume_spec")
+                        if isinstance(refined_payload, dict) and "resume_spec" in refined_payload
+                        else refined_payload
+                    )
+                    refined_spec = ResumeSpec.model_validate(raw_refined)
+                    verify_factual_guardrails(refined_spec, profile, experiences)
+                    resume_spec = refined_spec
+                    logger.info("Human resume refinement pass completed successfully")
+                except Exception as refine_err:
+                    logger.warning(f"Human resume refinement pass skipped or failed: {refine_err}")
 
     raw_letter = payload.get("cover_letter") or payload.get("cover_letter_text")
     cover_letter_text = _normalize_cover_letter(raw_letter)
@@ -459,9 +611,18 @@ def tailor_job_application(
     if artifact is None:
         artifact = TailoredArtifact(job_id=job.id)
 
+    raw_ats, raw_human = _parse_dual_specs(artifact.tailored_experience_json)
+    if mode == "human":
+        raw_human = resume_spec.model_dump()
+    else:
+        raw_ats = resume_spec.model_dump()
+
     artifact.selected_persona = persona
-    artifact.tailored_summary = summary_text or None
-    artifact.tailored_experience_json = resume_spec.model_dump()
+    artifact.tailored_summary = summary_text or artifact.tailored_summary or None
+    artifact.tailored_experience_json = {
+        "ats": raw_ats,
+        "human": raw_human,
+    }
     artifact.cover_letter_text = cover_letter_text
 
     job.language = language
@@ -471,6 +632,13 @@ def tailor_job_application(
     session.commit()
     session.refresh(artifact)
     assert artifact.id is not None
+    assert job.id is not None
+    logger.info(
+        f"Tailoring completed for job_id={job.id} (artifact_id={artifact.id}) mode='{mode}'"
+    )
+
+    spec_ats = ResumeSpec.model_validate(raw_ats) if raw_ats else None
+    spec_human = ResumeSpec.model_validate(raw_human) if raw_human else None
 
     return TailoringResult(
         artifact_id=artifact.id,
@@ -480,7 +648,59 @@ def tailor_job_application(
         ats_keywords=grounded_keywords,
         match_percentage=match_pct,
         resume_spec=resume_spec,
+        resume_spec_ats=spec_ats,
+        resume_spec_human=spec_human,
         cover_letter_text=cover_letter_text,
+    )
+
+
+def get_tailored_artifact(
+    session: Session,
+    job: JobPosting,
+    profile: MasterProfile,
+) -> TailoringResult | None:
+    """Retrieve persisted TailoredArtifact and build TailoringResult without LLM calls."""
+    artifact = session.exec(
+        select(TailoredArtifact).where(TailoredArtifact.job_id == job.id)
+    ).first()
+    if artifact is None or not artifact.tailored_experience_json:
+        return None
+
+    raw_ats, raw_human = _parse_dual_specs(artifact.tailored_experience_json)
+    if not raw_ats and not raw_human:
+        return None
+
+    spec_ats = ResumeSpec.model_validate(raw_ats) if raw_ats else None
+    spec_human = ResumeSpec.model_validate(raw_human) if raw_human else None
+    active_spec = spec_ats or spec_human
+    if active_spec is None:
+        return None
+
+    job_text = job.cleaned_text or job.raw_description or ""
+    experiences = list(
+        session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
+    )
+    _, grounded_keywords, match_pct = extract_ats_keywords(job_text, profile, experiences)
+    persona = artifact.selected_persona or select_persona(job_text, profile)
+    language: TargetLanguage = (
+        job.language  # type: ignore[assignment]
+        if job.language in ("pt-br", "en")
+        else detect_language(job_text)
+    )
+
+    assert artifact.id is not None
+    assert job.id is not None
+    return TailoringResult(
+        artifact_id=artifact.id,
+        job_id=job.id,
+        language=language,
+        selected_persona=persona,
+        ats_keywords=grounded_keywords,
+        match_percentage=match_pct,
+        resume_spec=active_spec,
+        resume_spec_ats=spec_ats,
+        resume_spec_human=spec_human,
+        cover_letter_text=artifact.cover_letter_text or "",
     )
 
 
@@ -579,12 +799,22 @@ def generate_gupy_rundown(
     metrics = _extract_impact_metrics(experiences)
     skills = _extract_prioritized_skills(profile, experiences, grounded_keywords)
 
+    saved_qa: list[SolveQuestionResponse] = []
+    if artifact and isinstance(artifact.gupy_qa_json, list):
+        for item in artifact.gupy_qa_json:
+            if isinstance(item, dict):
+                try:
+                    saved_qa.append(SolveQuestionResponse(**item))
+                except Exception:
+                    pass
+
     rundown = GupyRundown(
         short_bio=short_bio,
         impact_metrics=metrics,
         prioritized_skill_tags=skills,
         language=language,
         selected_persona=artifact.selected_persona or persona,
+        screening_qa=saved_qa,
     )
 
     artifact.gupy_rundown_json = rundown.model_dump()
@@ -631,6 +861,19 @@ def solve_screening_question(
     if not clean_q:
         raise ValueError("Question must not be empty.")
 
+    clean_q_lower = clean_q.lower()
+    artifact = session.exec(
+        select(TailoredArtifact).where(TailoredArtifact.job_id == job.id)
+    ).first()
+
+    if artifact and isinstance(artifact.gupy_qa_json, list):
+        for item in artifact.gupy_qa_json:
+            if (
+                isinstance(item, dict)
+                and str(item.get("question", "")).strip().lower() == clean_q_lower
+            ):
+                return SolveQuestionResponse(**item)
+
     experiences = list(
         session.exec(select(Experience).where(Experience.profile_id == profile.id)).all()
     )
@@ -644,15 +887,23 @@ def solve_screening_question(
 
     system_prompt = (
         "You are an elite Career Interview & Screening Q&A Assistant.\n"
-        "STRICT FACTUAL INTEGRITY GUARDRAIL (NON-NEGOTIABLE):\n"
+        "STRICT FACTUAL INTEGRITY & ANTI-AI DIRECTIVES (NON-NEGOTIABLE):\n"
         "1. Answer the screening question in first person ('I' / 'Eu') drawing STRICTLY "
         "from the candidate's real experiences and metrics in MasterProfile.\n"
-        "2. NEVER invent companies, tools, technologies, certifications, or metrics "
+        "2. Tone and style: objective, impersonal, and binary regarding technical requirements. "
+        "State directly whether the requirement is met followed by concrete facts and metrics. "
+        "Eliminate robotic filler, evasive generalities, self-aggrandizing adjectives, "
+        "and AI boilerplate.\n"
+        "3. NEVER invent companies, tools, technologies, certifications, or metrics "
         "not explicitly present in MasterProfile.\n"
-        "3. Keep the answer concise (1 to 2 paragraphs, ready to paste into Gupy or ATS forms).\n"
-        f"4. Output language MUST be strictly {lang_label}.\n"
-        f"5. Adopt the focus lens: '{persona}'.\n"
-        "6. Respond strictly with a JSON object containing keys: "
+        "4. Keep the answer concise (1 to 2 paragraphs, ready to paste into Gupy or ATS forms).\n"
+        f"5. Output language MUST be strictly {lang_label}.\n"
+        f"6. Adopt the focus lens: '{persona}'.\n"
+        "7. Positioning Temporary Contracts: When citing experiences marked with is_contract: true, "
+        "position them positively as scoped consulting engagements or specialized deliverables with defined objectives. "
+        "Frame achievements around rapid ramp-up and successful autonomous completion of the agreed scope, "
+        "preventing defensive phrasing or perceptions of career instability.\n"
+        "8. Respond strictly with a JSON object containing keys: "
         "'answer' (string) and 'grounded_experiences' (list of company/project names cited)."
     )
 
@@ -699,7 +950,11 @@ def solve_screening_question(
     if artifact is None:
         artifact = TailoredArtifact(job_id=job.id, selected_persona=persona)
 
-    history = list(artifact.gupy_qa_json) if isinstance(artifact.gupy_qa_json, list) else []
+    history = [
+        item
+        for item in (artifact.gupy_qa_json if isinstance(artifact.gupy_qa_json, list) else [])
+        if isinstance(item, dict) and str(item.get("question", "")).strip().lower() != clean_q_lower
+    ]
     history.append(response.model_dump())
     artifact.gupy_qa_json = history
     session.add(artifact)

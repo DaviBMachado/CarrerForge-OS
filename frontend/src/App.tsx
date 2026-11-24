@@ -1,20 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, HealthStatus, JobPostingItem, SystemSettings } from "./api";
 import { JobRadar } from "./components/JobRadar";
 import { MasterProfileHub } from "./components/MasterProfileHub";
-import { ResumePreviewer } from "./components/ResumePreviewer";
+import { GeneralResumeBuilder } from "./components/GeneralResumeBuilder";
 import { SettingsModal } from "./components/SettingsModal";
 import { TailoringStudio } from "./components/TailoringStudio";
+import { useAppStore } from "./store";
+import { AppLanguage, useTranslation } from "./i18n";
 
 type ActiveTab = "radar" | "studio" | "profile" | "compiler" | "status";
 
 export function App() {
+  const { language, setLanguage, t } = useTranslation();
   const [activeTab, setActiveTab] = useState<ActiveTab>("radar");
-  const [selectedJob, setSelectedJob] = useState<JobPostingItem | null>(null);
+  const selectedJob = useAppStore((s) => s.selectedJob);
+  const setSelectedJob = useAppStore((s) => s.setSelectedJob);
+  const settings = useAppStore((s) => s.settings);
+  const setSettings = useAppStore((s) => s.setSettings);
+  const fetchSettings = useAppStore((s) => s.fetchSettings);
+  const radarLogs = useAppStore((s) => s.radarLogs);
+  const clearRadarLogs = useAppStore((s) => s.clearRadarLogs);
+  const scraperRunning = useAppStore((s) => s.scraperRunning);
+  const scraperProgress = useAppStore((s) => s.scraperProgress);
+  const setScraperRunning = useAppStore((s) => s.setScraperRunning);
+
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
-  const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const runtimeLogContainerRef = useRef<HTMLDivElement | null>(null);
   const [toast, setToast] = useState<{
     type: "success" | "error";
     message: string;
@@ -27,19 +40,34 @@ export function App() {
     }, 4500);
   };
 
+  const handleCancelScraper = async () => {
+    try {
+      await api.stopScraper();
+      setScraperRunning(false);
+      notify("success", t("runtime.scraperStopped"));
+    } catch (err) {
+      notify(
+        "error",
+        err instanceof Error ? err.message : "Failed to stop scraper"
+      );
+    }
+  };
+
   useEffect(() => {
     api
       .getHealth()
       .then((data) => setHealth(data))
       .catch((err: Error) => setHealthError(err.message));
 
-    api
-      .getSettings()
-      .then((data) => setSettings(data))
-      .catch(() => {
-        // fallback if settings endpoint not yet populated
-      });
-  }, []);
+    void fetchSettings();
+  }, [fetchSettings]);
+
+  useEffect(() => {
+    if (activeTab === "status" && runtimeLogContainerRef.current) {
+      runtimeLogContainerRef.current.scrollTop =
+        runtimeLogContainerRef.current.scrollHeight;
+    }
+  }, [radarLogs, activeTab]);
 
   const isProviderConfigured = (s: SystemSettings | null): boolean => {
     if (!s) return false;
@@ -50,6 +78,8 @@ export function App() {
         return Boolean(s.openai_api_key);
       case "claude":
         return Boolean(s.anthropic_api_key);
+      case "openrouter":
+        return Boolean(s.openrouter_api_key);
       case "ollama":
         return Boolean(s.ollama_base_url);
       default:
@@ -60,6 +90,9 @@ export function App() {
   const providerLabel = settings?.active_provider
     ? settings.active_provider.toUpperCase()
     : "GEMINI";
+  const modelLabel = settings?.selected_model
+    ? ` (${settings.selected_model})`
+    : "";
   const providerReady = isProviderConfigured(settings);
 
   return (
@@ -74,54 +107,94 @@ export function App() {
           <nav className="nav-tabs" aria-label="Main navigation">
             <button
               type="button"
+              id="tab-radar"
+              aria-controls="tabpanel-radar"
               className={`nav-tab ${activeTab === "radar" ? "active" : ""}`}
               onClick={() => setActiveTab("radar")}
               aria-current={activeTab === "radar" ? "page" : undefined}
             >
-              Job Radar
+              {t("nav.jobRadar")}
             </button>
             <button
               type="button"
+              id="tab-studio"
+              aria-controls="tabpanel-studio"
               className={`nav-tab ${activeTab === "studio" ? "active" : ""}`}
               onClick={() => setActiveTab("studio")}
               aria-current={activeTab === "studio" ? "page" : undefined}
             >
-              Tailoring Studio
+              {t("nav.tailoringStudio")}
             </button>
             <button
               type="button"
+              id="tab-profile"
+              aria-controls="tabpanel-profile"
               className={`nav-tab ${activeTab === "profile" ? "active" : ""}`}
               onClick={() => setActiveTab("profile")}
               aria-current={activeTab === "profile" ? "page" : undefined}
             >
-              Master Profile
+              {t("nav.masterProfile")}
             </button>
             <button
               type="button"
+              id="tab-compiler"
+              aria-controls="tabpanel-compiler"
               className={`nav-tab ${activeTab === "compiler" ? "active" : ""}`}
               onClick={() => setActiveTab("compiler")}
               aria-current={activeTab === "compiler" ? "page" : undefined}
             >
-              Resume Previewer
+              {t("nav.resumeBuilder")}
             </button>
             <button
               type="button"
+              id="tab-status"
+              aria-controls="tabpanel-status"
               className={`nav-tab ${activeTab === "status" ? "active" : ""}`}
               onClick={() => setActiveTab("status")}
               aria-current={activeTab === "status" ? "page" : undefined}
             >
-              Runtime Status
+              {t("nav.runtimeStatus")}
             </button>
           </nav>
         </div>
 
         <div className="topbar-actions">
-          <div
+          <div className="status-pill" title={t("topbar.language")}>
+            <select
+              aria-label={t("topbar.language")}
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as AppLanguage)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "inherit",
+                fontSize: "0.8125rem",
+                cursor: "pointer",
+                outline: "none",
+              }}
+            >
+              <option value="en" style={{ color: "var(--ink-primary)", backgroundColor: "var(--bg-elevated)" }}>EN</option>
+              <option value="pt-BR" style={{ color: "var(--ink-primary)", backgroundColor: "var(--bg-elevated)" }}>PT-BR</option>
+            </select>
+          </div>
+
+          <button
+            type="button"
             className="status-pill"
+            style={{
+              cursor: "pointer",
+              background: "none",
+              border: "1px solid var(--border-subtle)",
+              font: "inherit",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.35rem",
+            }}
+            onClick={() => setSettingsOpen(true)}
             title={
               providerReady
-                ? `Active LLM Provider: ${providerLabel} (Key configured)`
-                : `Active LLM Provider: ${providerLabel} (Key missing)`
+                ? `Active LLM: ${providerLabel}${modelLabel} (Click to switch provider/model)`
+                : `Active LLM: ${providerLabel} (Key missing — click to configure)`
             }
           >
             <span
@@ -132,8 +205,8 @@ export function App() {
                   : "var(--warning)",
               }}
             />
-            <span>LLM: {providerLabel}</span>
-          </div>
+            <span>LLM: {providerLabel}{modelLabel}</span>
+          </button>
 
           <div className="status-pill">
             <span
@@ -149,10 +222,10 @@ export function App() {
             />
             <span>
               {health?.status === "healthy"
-                ? `API v${health.version}`
+                ? t("topbar.apiOnline", { version: health.version })
                 : healthError
-                  ? "API Offline"
-                  : "Connecting..."}
+                  ? t("topbar.apiOffline")
+                  : t("topbar.apiConnecting")}
             </span>
           </div>
 
@@ -161,7 +234,7 @@ export function App() {
             className="btn"
             onClick={() => setSettingsOpen(true)}
           >
-            Settings
+            {t("topbar.settings")}
           </button>
         </div>
       </header>
@@ -169,7 +242,16 @@ export function App() {
       <main
         className={`main-container ${activeTab === "studio" ? "main-container-wide" : ""}`}
       >
-        {activeTab === "radar" ? (
+        <div
+          role="tabpanel"
+          id="tabpanel-radar"
+          aria-labelledby="tab-radar"
+          hidden={activeTab !== "radar"}
+          style={{
+            display: activeTab === "radar" ? "block" : "none",
+            width: "100%",
+          }}
+        >
           <JobRadar
             onNotify={notify}
             onTailorResume={(job: JobPostingItem) => {
@@ -181,21 +263,65 @@ export function App() {
               );
             }}
           />
-        ) : activeTab === "studio" ? (
+        </div>
+
+        <div
+          role="tabpanel"
+          id="tabpanel-studio"
+          aria-labelledby="tab-studio"
+          hidden={activeTab !== "studio"}
+          style={{
+            display: activeTab === "studio" ? "block" : "none",
+            width: "100%",
+          }}
+        >
           <TailoringStudio
             selectedJob={selectedJob}
             onSelectJob={setSelectedJob}
             onNotify={notify}
           />
-        ) : activeTab === "profile" ? (
+        </div>
+
+        <div
+          role="tabpanel"
+          id="tabpanel-profile"
+          aria-labelledby="tab-profile"
+          hidden={activeTab !== "profile"}
+          style={{
+            display: activeTab === "profile" ? "block" : "none",
+            width: "100%",
+          }}
+        >
           <MasterProfileHub onNotify={notify} />
-        ) : activeTab === "compiler" ? (
-          <ResumePreviewer onNotify={notify} />
-        ) : (
+        </div>
+
+        <div
+          role="tabpanel"
+          id="tabpanel-compiler"
+          aria-labelledby="tab-compiler"
+          hidden={activeTab !== "compiler"}
+          style={{
+            display: activeTab === "compiler" ? "block" : "none",
+            width: "100%",
+          }}
+        >
+          <GeneralResumeBuilder onNotify={notify} />
+        </div>
+
+        <div
+          role="tabpanel"
+          id="tabpanel-status"
+          aria-labelledby="tab-status"
+          hidden={activeTab !== "status"}
+          style={{
+            display: activeTab === "status" ? "block" : "none",
+            width: "100%",
+          }}
+        >
           <section className="panel" aria-labelledby="runtime-status-heading">
             <div className="panel-header">
               <h1 id="runtime-status-heading" className="panel-title">
-                Monolith Runtime & Provider Status
+                {t("runtime.panelTitle")}
               </h1>
             </div>
             {health && (
@@ -209,28 +335,30 @@ export function App() {
               >
                 <div>
                   <strong style={{ color: "var(--ink-primary)" }}>
-                    Service:
+                    {t("common.service")}:
                   </strong>{" "}
                   {health.app}
                 </div>
                 <div>
                   <strong style={{ color: "var(--ink-primary)" }}>
-                    Status:
+                    {t("common.status")}:
                   </strong>{" "}
                   {health.status}
                 </div>
                 <div>
                   <strong style={{ color: "var(--ink-primary)" }}>
-                    Version:
+                    {t("common.version")}:
                   </strong>{" "}
                   {health.version}
                 </div>
                 <div>
                   <strong style={{ color: "var(--ink-primary)" }}>
-                    Active LLM Provider:
+                    {t("common.activeLlm")}:
                   </strong>{" "}
                   {providerLabel} (
-                  {providerReady ? "Configured" : "Awaiting API Key"})
+                  {providerReady
+                    ? t("common.configured")
+                    : t("common.awaitingKey")})
                 </div>
               </div>
             )}
@@ -240,7 +368,146 @@ export function App() {
               </p>
             )}
           </section>
-        )}
+
+          {scraperRunning && (
+            <div
+              style={{
+                marginTop: "1.25rem",
+                padding: "0.875rem 1rem",
+                borderRadius: "8px",
+                background: "var(--bg-elevated)",
+                border: "1px solid var(--accent-tint)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "1rem",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    fontSize: "0.85rem",
+                    marginBottom: "0.4rem",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                    }}
+                  >
+                    <span
+                      className="status-dot"
+                      style={{ backgroundColor: "var(--accent)" }}
+                    />
+                    <strong style={{ color: "var(--ink-primary)" }}>
+                      {t("runtime.scraperActive")}
+                    </strong>
+                  </div>
+                  <span style={{ fontWeight: 600, color: "var(--accent)" }}>
+                    {scraperProgress}%
+                  </span>
+                </div>
+                <div
+                  style={{
+                    height: "6px",
+                    background: "var(--border-subtle)",
+                    borderRadius: "999px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${scraperProgress}%`,
+                      backgroundColor: "var(--accent)",
+                      transition: "width 0.3s ease",
+                    }}
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={handleCancelScraper}
+              >
+                {t("runtime.stopScraper")}
+              </button>
+            </div>
+          )}
+
+          <section
+            className="panel"
+            aria-labelledby="runtime-logs-heading"
+            style={{ marginTop: "1.5rem" }}
+          >
+            <div
+              className="panel-header"
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.6rem",
+                }}
+              >
+                <h2 id="runtime-logs-heading" className="panel-title">
+                  {t("runtime.scraperLogsTitle")}
+                </h2>
+                <span className="status-pill" style={{ fontSize: "0.75rem" }}>
+                  {radarLogs.length}{" "}
+                  {language === "pt-BR" ? "eventos" : "events"}
+                </span>
+              </div>
+              {radarLogs.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={clearRadarLogs}
+                >
+                  {t("runtime.clearLogs")}
+                </button>
+              )}
+            </div>
+
+            <div
+              ref={runtimeLogContainerRef}
+              className="console-body"
+              role="log"
+              aria-live="polite"
+              style={{
+                height: "280px",
+                backgroundColor: "oklch(0.12 0.012 255)",
+                borderRadius: "8px",
+                border: "1px solid var(--border-subtle)",
+              }}
+            >
+              {radarLogs.length === 0 ? (
+                <div className="console-line muted">
+                  {t("runtime.noLogs")}
+                </div>
+              ) : (
+                radarLogs.map((entry, idx) => (
+                  <div key={idx} className="console-line">
+                    <span className="console-progress">
+                      [{String(entry.progress ?? 0).padStart(3, " ")}%]
+                    </span>{" "}
+                    <span>{entry.message}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
       </main>
 
       <SettingsModal

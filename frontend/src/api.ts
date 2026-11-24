@@ -1,4 +1,4 @@
-export type LLMProvider = "gemini" | "openai" | "claude" | "ollama";
+export type LLMProvider = "gemini" | "openai" | "claude" | "ollama" | "openrouter";
 
 export interface BulletItem {
   text: string;
@@ -14,6 +14,8 @@ export interface ExperienceItem {
   start_date: string | null;
   end_date: string | null;
   is_current: boolean;
+  is_academic?: boolean;
+  is_contract?: boolean;
   bullets_json: BulletItem[];
 }
 
@@ -24,6 +26,8 @@ export interface ExperiencePayload {
   start_date?: string | null;
   end_date?: string | null;
   is_current?: boolean;
+  is_academic?: boolean;
+  is_contract?: boolean;
   bullets_json?: BulletItem[];
 }
 
@@ -59,19 +63,13 @@ export interface ProfileUpdatePayload {
   languages_json?: string[] | null;
 }
 
-export interface LegacyImportResult {
-  status: string;
-  profile_id: number;
-  experiences_count: number;
-  specs_scanned: number;
-  total_bullets: number;
-}
-
 export interface SystemSettings {
   active_provider: LLMProvider;
+  selected_model?: string | null;
   gemini_api_key: string | null;
   openai_api_key: string | null;
   anthropic_api_key: string | null;
+  openrouter_api_key?: string | null;
   ollama_base_url: string;
   scraper_headless: boolean;
   scraper_timeout: number;
@@ -133,15 +131,29 @@ export interface JobPostingItem {
   cleaned_text: string | null;
   language: string;
   status: string;
+  match_percentage?: number | null;
   created_at: string;
+}
+
+export interface ManualJobCreatePayload {
+  title: string;
+  company: string;
+  raw_description: string;
+  location?: string | null;
+  remote_type?: string | null;
+  url?: string | null;
+  language?: string;
 }
 
 export interface ScraperSessionStatus {
   authenticated: boolean;
   linkedin: boolean;
   gupy: boolean;
+  platforms?: Record<string, boolean>;
+  active_platform?: string | null;
   session_dir: string;
   status?: string;
+  browser_open?: boolean;
 }
 
 export interface ScraperStartPayload {
@@ -171,6 +183,8 @@ export interface TailoringResult {
   ats_keywords: string[];
   match_percentage: number;
   resume_spec: ResumeSpecPayload;
+  resume_spec_ats?: ResumeSpecPayload | null;
+  resume_spec_human?: ResumeSpecPayload | null;
   cover_letter_text: string;
 }
 
@@ -180,6 +194,7 @@ export interface GupyRundown {
   prioritized_skill_tags: string[];
   language: TargetLanguage;
   selected_persona: string;
+  screening_qa?: SolveQuestionResponse[];
 }
 
 export interface SolveQuestionResponse {
@@ -203,9 +218,19 @@ export interface CoverLetterSpecPayload {
   filename_title?: string;
 }
 
+function getAuthHeaders(): Record<string, string> {
+  if (typeof localStorage === "undefined") return {};
+  const token = localStorage.getItem("careerforge_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+      ...(init?.headers ?? {}),
+    },
     ...init,
   });
   if (!res.ok) {
@@ -225,6 +250,18 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  setAuthToken: (token: string | null) => {
+    if (typeof localStorage === "undefined") return;
+    if (token) {
+      localStorage.setItem("careerforge_token", token);
+    } else {
+      localStorage.removeItem("careerforge_token");
+    }
+  },
+  getAuthToken: (): string | null => {
+    if (typeof localStorage === "undefined") return null;
+    return localStorage.getItem("careerforge_token");
+  },
   getHealth: () => request<HealthStatus>("/api/health"),
   getProfile: () => request<MasterProfile>("/api/profile"),
   updateProfile: (data: ProfileUpdatePayload) =>
@@ -246,15 +283,52 @@ export const api = {
     request<void>(`/api/profile/experiences/${id}`, {
       method: "DELETE",
     }),
-  importLegacyProfile: () =>
-    request<LegacyImportResult>("/api/profile/import-legacy", {
+  uploadResume: async (file: File): Promise<MasterProfile> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/profile/upload", {
       method: "POST",
-    }),
+      headers: { ...getAuthHeaders() },
+      body: formData,
+    });
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const errJson = (await res.json()) as { detail?: string };
+        if (errJson.detail) detail = errJson.detail;
+      } catch {
+        // ignore non-json error body
+      }
+      throw new Error(detail);
+    }
+    return (await res.json()) as MasterProfile;
+  },
   getSettings: () => request<SystemSettings>("/api/settings"),
   saveSettings: (data: SettingsUpdatePayload) =>
     request<SystemSettings>("/api/settings", {
       method: "POST",
       body: JSON.stringify(data),
+    }),
+  fetchModels: (provider: string, apiKey?: string) => {
+    const params = new URLSearchParams({ provider });
+    if (apiKey) params.append("api_key", apiKey);
+    return request<{ models: string[]; default_model: string }>(
+      `/api/settings/models?${params.toString()}`
+    );
+  },
+  getSystemLogs: (limit = 150) =>
+    request<{
+      logs: Array<{
+        timestamp: string;
+        level: string;
+        logger: string;
+        message: string;
+      }>;
+    }>(`/api/system/logs?limit=${limit}`),
+  expandResumeSection: (currentText: string) =>
+    request<{ expanded_text: string }>("/api/tailor/expand-section", {
+      method: "POST",
+      body: JSON.stringify({ current_text: currentText }),
     }),
   previewResume: (spec: ResumeSpecPayload) =>
     request<PreviewResponse>("/api/compiler/preview", {
@@ -267,7 +341,7 @@ export const api = {
   ): Promise<{ blob: Blob; filename: string }> => {
     const res = await fetch(`/api/compiler/export?format=${format}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({ ...spec, format }),
     });
     if (!res.ok) {
@@ -293,6 +367,20 @@ export const api = {
     request<ScraperSessionStatus>("/api/scraper/session/login", {
       method: "POST",
     }),
+  openScraperSession: (platform?: string) =>
+    request<{ status: string; platform?: string }>("/api/scraper/session/open", {
+      method: "POST",
+      body: JSON.stringify({ platform: platform ?? null }),
+    }),
+  verifyScraperSession: (platform?: string) =>
+    request<ScraperSessionStatus>("/api/scraper/session/verify", {
+      method: "POST",
+      body: JSON.stringify({ platform: platform ?? null }),
+    }),
+  closeScraperSession: () =>
+    request<{ status: string }>("/api/scraper/session/close", {
+      method: "POST",
+    }),
   startScraper: (payload: ScraperStartPayload) =>
     request<{ run_id: string }>("/api/scraper/start", {
       method: "POST",
@@ -304,13 +392,25 @@ export const api = {
       body: JSON.stringify({ run_id: runId ?? null }),
     }),
   getScrapedJobs: () => request<JobPostingItem[]>("/api/scraper/jobs"),
+  createManualJob: (payload: ManualJobCreatePayload) =>
+    request<JobPostingItem>("/api/scraper/jobs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  extractJobFromUrl: (url: string) =>
+    request<JobPostingItem>("/api/scraper/extract-url", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
   updateJobStatus: (jobId: number, status: string) =>
     request<JobPostingItem>(`/api/scraper/jobs/${jobId}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
-  tailorJob: (jobId: number) =>
-    request<TailoringResult>(`/api/tailor/${jobId}`, {
+  getTailoredJob: (jobId: number) =>
+    request<TailoringResult>(`/api/tailor/${jobId}`),
+  tailorJob: (jobId: number, mode: "ats" | "human" = "ats") =>
+    request<TailoringResult>(`/api/tailor/${jobId}?mode=${mode}`, {
       method: "POST",
     }),
   getGupyRundown: (jobId: number) =>
@@ -326,7 +426,7 @@ export const api = {
   ): Promise<{ blob: Blob; filename: string }> => {
     const res = await fetch(`/api/compiler/cover-letter/export?format=${format}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({ ...spec, format }),
     });
     if (!res.ok) {

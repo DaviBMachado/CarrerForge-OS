@@ -24,6 +24,8 @@ class ExperienceBase(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     is_current: bool = False
+    is_academic: bool = False
+    is_contract: bool = False
     bullets_json: list[BulletItem] = Field(default_factory=list)
 
 
@@ -38,6 +40,8 @@ class ExperienceUpdate(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     is_current: bool | None = None
+    is_academic: bool | None = None
+    is_contract: bool | None = None
     bullets_json: list[BulletItem] | None = None
 
 
@@ -69,11 +73,3 @@ class ProfileRead(BaseModel):
     skills_json: Any | None = None
     languages_json: Any | None = None
     experiences: list[ExperienceRead] = Field(default_factory=list)
-
-
-class LegacyImportResponse(BaseModel):
-    status: str
-    profile_id: int
-    experiences_count: int
-    specs_scanned: int
-    total_bullets: int

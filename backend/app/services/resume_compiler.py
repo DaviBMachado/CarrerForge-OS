@@ -18,6 +18,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+from backend.app.logging_config import get_logger
+
+logger = get_logger("careerforge.compiler")
+
 BULLET_CHAR = "\u2022"
 CONTACT_SEP = " | "
 FONT_FAMILY = "Carlito"
@@ -209,13 +213,14 @@ def _register_fonts(font_dir: Path | None = None) -> None:
             pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
 
 
-def _pdf_styles() -> dict[str, ParagraphStyle]:
+def _pdf_styles(condensed: bool = False) -> dict[str, ParagraphStyle]:
+    leading_delta = 1 if condensed else 0
     return {
         "title": ParagraphStyle(
             "title",
             fontName=f"{FONT_FAMILY}-Bold",
             fontSize=17,
-            leading=20,
+            leading=20 - leading_delta,
             alignment=1,
             spaceAfter=2,
         ),
@@ -223,48 +228,48 @@ def _pdf_styles() -> dict[str, ParagraphStyle]:
             "contact",
             fontName=FONT_FAMILY,
             fontSize=9.5,
-            leading=12,
+            leading=12 - leading_delta,
             alignment=1,
-            spaceAfter=6,
+            spaceAfter=5 if condensed else 6,
         ),
         "section": ParagraphStyle(
             "section",
             fontName=f"{FONT_FAMILY}-Bold",
             fontSize=11,
-            leading=13,
+            leading=13 - leading_delta,
             textColor=HexColor("#1F3A5F"),
-            spaceBefore=8,
-            spaceAfter=3,
+            spaceBefore=6 if condensed else 8,
+            spaceAfter=2 if condensed else 3,
         ),
         "subheading": ParagraphStyle(
             "subheading",
             fontName=f"{FONT_FAMILY}-Bold",
             fontSize=10,
-            leading=12,
-            spaceBefore=4,
+            leading=12 - leading_delta,
+            spaceBefore=3 if condensed else 4,
             spaceAfter=1,
         ),
         "paragraph": ParagraphStyle(
             "paragraph",
             fontName=FONT_FAMILY,
             fontSize=9.5,
-            leading=12,
-            spaceAfter=3,
+            leading=12 - leading_delta,
+            spaceAfter=2 if condensed else 3,
         ),
         "bullet": ParagraphStyle(
             "bullet",
             fontName=FONT_FAMILY,
             fontSize=9.5,
-            leading=12,
+            leading=12 - leading_delta,
             leftIndent=8,
-            spaceAfter=1.5,
+            spaceAfter=1 if condensed else 1.5,
         ),
         "skillline": ParagraphStyle(
             "skillline",
             fontName=FONT_FAMILY,
             fontSize=9.5,
-            leading=12,
-            spaceAfter=2,
+            leading=12 - leading_delta,
+            spaceAfter=1.5 if condensed else 2,
         ),
     }
 
@@ -395,25 +400,32 @@ class ResumeCompiler:
 
         buf = io.BytesIO()
         doc.save(buf)
+        doc_name = parsed.filename_title or parsed.name or parsed.title or "Resume"
+        logger.info(f"Compiled DOCX resume '{doc_name}': {len(buf.getvalue())} bytes")
         buf.seek(0)
         return buf
 
-    def compile_pdf(self, spec: ResumeSpec | dict[str, Any]) -> tuple[io.BytesIO, int]:
+    def compile_pdf(
+        self,
+        spec: ResumeSpec | dict[str, Any],
+        condensed: bool = False,
+    ) -> tuple[io.BytesIO, int]:
         parsed = self._coerce_spec(spec)
         buf = io.BytesIO()
         author = parsed.name or parsed.title
+        margin = 12 * mm if condensed else 15 * mm
         doc = SimpleDocTemplate(
             buf,
             pagesize=A4,
-            leftMargin=15 * mm,
-            rightMargin=15 * mm,
-            topMargin=15 * mm,
-            bottomMargin=15 * mm,
+            leftMargin=margin,
+            rightMargin=margin,
+            topMargin=margin,
+            bottomMargin=margin,
             title=parsed.filename_title or author or "Resume",
             author=author,
         )
 
-        styles = _pdf_styles()
+        styles = _pdf_styles(condensed=condensed)
         story: list[Any] = []
 
         for section in parsed.resolved_sections():
@@ -443,17 +455,19 @@ class ResumeCompiler:
                 elif btype == "bullet":
                     story.append(Paragraph(f"{BULLET_CHAR}&nbsp;{text}", styles["bullet"]))
                 elif btype == "skillline":
-                    for i, part in enumerate(text.split("||")):
-                        part = part.strip()
-                        if not part:
-                            continue
-                        html = ("&nbsp;&nbsp;|&nbsp;&nbsp;" if i > 0 else "") + re.sub(
-                            r"\*\*(.+?)\*\*", r"<b>\1</b>", part
-                        )
-                        story.append(Paragraph(html, styles["skillline"]))
+                    parts = [p.strip() for p in text.split("||") if p.strip()]
+                    if not parts:
+                        continue
+                    formatted_parts = [re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", p) for p in parts]
+                    html = " &nbsp;|&nbsp; ".join(formatted_parts)
+                    story.append(Paragraph(html, styles["skillline"]))
 
         doc.build(story)
         page_count = int(getattr(doc, "page", 1))
+        doc_name = parsed.filename_title or author or "Resume"
+        logger.info(
+            f"Compiled PDF resume '{doc_name}': {page_count} page(s) ({len(buf.getvalue())} bytes)"
+        )
         buf.seek(0)
         return buf, page_count
 
@@ -517,6 +531,12 @@ class ResumeCompiler:
                     story.append(Paragraph(escape(line.strip()), styles["paragraph"]))
 
         doc.build(story)
+        page_count = int(getattr(doc, "page", 1))
+        size_bytes = len(buf.getvalue())
+        logger.info(
+            f"Compiled PDF cover letter '{display_title}': "
+            f"{page_count} page(s) ({size_bytes} bytes)"
+        )
         buf.seek(0)
         return buf
 

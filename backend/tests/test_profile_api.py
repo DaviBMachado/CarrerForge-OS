@@ -6,7 +6,6 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from backend.app.db import get_db
-from backend.app.services.legacy_importer import parse_markdown_resume
 from backend.main import app
 
 
@@ -40,8 +39,8 @@ def test_get_initial_profile(client: TestClient):
     response = client.get("/api/profile")
     assert response.status_code == 200
     data = response.json()
-    assert data["full_name"] == "Davi Bernardes Machado"
-    assert data["headline"] == "Engenheiro de Software Backend"
+    assert data["full_name"] == ""
+    assert data["headline"] is None
     assert "experiences" in data
     assert isinstance(data["experiences"], list)
 
@@ -145,77 +144,68 @@ def test_experience_not_found(client: TestClient):
     assert res_del.status_code == 404
 
 
-def test_legacy_import_endpoint(client: TestClient):
-    response = client.post("/api/profile/import-legacy")
-    assert response.status_code == 200
-    result = response.json()
-    assert result["status"] == "imported"
-    assert result["experiences_count"] == 2
-    assert result["total_bullets"] == 12
-    assert result["specs_scanned"] == 0
+def test_multi_user_isolation_and_idor_prevention(client: TestClient):
+    # 1. User 1 creates an experience
+    h1 = {"Authorization": "Bearer 1"}
+    h2 = {"Authorization": "Bearer 2"}
 
-    # Verify profile data populated
-    profile_res = client.get("/api/profile")
-    assert profile_res.status_code == 200
-    p = profile_res.json()
-    assert p["full_name"] == "Davi Bernardes Machado"
-    assert p["contact_json"]["email"] == "davibernardes021@gmail.com"
-    assert len(p["experiences"]) == 2
-
-    # 1st entry: canonical employment experience without spec duplicates
-    exp_employment = p["experiences"][0]
-    assert exp_employment["company"] == "Itaú Unibanco"
-    assert exp_employment["role"] == "Estagiário em Engenharia de Software Backend"
-    assert exp_employment["start_date"] == "02/2024"
-    assert exp_employment["end_date"] == "06/2025"
-    assert len(exp_employment["bullets_json"]) == 8
-    first_bullet = exp_employment["bullets_json"][0]
-    assert first_bullet["text"].startswith("Agentes conversacionais e IA generativa:")
-    assert "Python" in first_bullet["tags"]
-    assert "RAG" in first_bullet["tags"]
-
-    # 2nd entry: generically classified as a project, clean year, tech stack converted to tags
-    exp_project = p["experiences"][1]
-    assert "Projeto" in exp_project["company"]
-    assert exp_project["role"] == "ConsultorIA Dores — Agente de Crédito e Chat Conversacional"
-    assert exp_project["start_date"] == "2026"
-    assert exp_project["end_date"] == "2026"
-    assert len(exp_project["bullets_json"]) == 4
-    assert not any(
-        b["text"].lower().startswith("tecnologias:") for b in exp_project["bullets_json"]
+    create_resp = client.post(
+        "/api/profile/experiences",
+        headers=h1,
+        json={
+            "company": "User 1 Company",
+            "role": "Lead Architect",
+            "bullets_json": [{"text": "Core platform design", "tags": ["python"]}],
+        },
     )
-    all_project_tags = {tag for b in exp_project["bullets_json"] for tag in b["tags"]}
-    assert {"Python", "LangChain", "FAISS", "Pydantic"}.issubset(all_project_tags)
+    assert create_resp.status_code == 201
+    exp_id = create_resp.json()["id"]
+
+    # 2. User 2 tries to update User 1's experience (IDOR attempt)
+    update_resp = client.put(
+        f"/api/profile/experiences/{exp_id}",
+        headers=h2,
+        json={"company": "Hacked Company"},
+    )
+    assert update_resp.status_code == 404
+    assert update_resp.json()["detail"] == "Experience not found"
+
+    # 3. User 2 tries to delete User 1's experience (IDOR attempt)
+    delete_resp = client.delete(
+        f"/api/profile/experiences/{exp_id}",
+        headers=h2,
+    )
+    assert delete_resp.status_code == 404
+    assert delete_resp.json()["detail"] == "Experience not found"
+
+    # 4. User 2 verifies their own profile does not contain User 1's experience
+    u2_profile = client.get("/api/profile", headers=h2).json()
+    u2_exp_ids = [e["id"] for e in u2_profile["experiences"]]
+    assert exp_id not in u2_exp_ids
+
+    # 5. User 1 can legitimately update and delete their own experience
+    valid_update = client.put(
+        f"/api/profile/experiences/{exp_id}",
+        headers=h1,
+        json={"company": "User 1 Updated Company"},
+    )
+    assert valid_update.status_code == 200
+    assert valid_update.json()["company"] == "User 1 Updated Company"
+
+    valid_delete = client.delete(f"/api/profile/experiences/{exp_id}", headers=h1)
+    assert valid_delete.status_code == 204
 
 
-def test_parse_markdown_resume_generic_project_detection():
-    sample_md = """# Maria Silva
-São Paulo - SP | maria@example.com
+def test_require_auth_flag_blocks_unauthenticated_requests(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("CAREERFORGE_REQUIRE_AUTH", "true")
 
-## Experiência Profissional
+    # Unauthenticated request must receive 401
+    unauth_resp = client.get("/api/profile")
+    assert unauth_resp.status_code == 401
+    assert unauth_resp.json()["detail"] == "Authentication required"
 
-### Desenvolvedora Backend Pleno | Acme Payments (01/2023 - Atual)
-- **Arquitetura de Microsserviços:** desenvolvimento de APIs RESTful em Python com Docker
-e PostgreSQL.
-
-### Motor Antifraude — Pipeline de Detecção em Tempo Real (Hackathon FinTech 2024 — 2º Lugar)
-- Processamento de eventos de transação com baixa latência em AWS Lambda.
-- Stack: Python, AWS, DynamoDB, Docker.
-"""
-    parsed = parse_markdown_resume(sample_md)
-    assert len(parsed["experiences"]) == 2
-
-    role_exp = parsed["experiences"][0]
-    assert role_exp["company"] == "Acme Payments"
-    assert role_exp["role"] == "Desenvolvedora Backend Pleno"
-    assert role_exp["start_date"] == "01/2023"
-    assert role_exp["is_current"] is True
-    assert role_exp["bullets_json"][0]["text"].startswith("Arquitetura de Microsserviços:")
-
-    proj_exp = parsed["experiences"][1]
-    assert proj_exp["company"] == "Acme Payments · Projeto (Hackathon FinTech 2024 — 2º Lugar)"
-    assert proj_exp["role"] == "Motor Antifraude — Pipeline de Detecção em Tempo Real"
-    assert proj_exp["start_date"] == "2024"
-    assert proj_exp["end_date"] == "2024"
-    assert len(proj_exp["bullets_json"]) == 1
-    assert "DynamoDB" in proj_exp["bullets_json"][0]["tags"]
+    # Authenticated request succeeds
+    auth_resp = client.get("/api/profile", headers={"Authorization": "Bearer 1"})
+    assert auth_resp.status_code == 200
